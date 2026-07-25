@@ -1,0 +1,151 @@
+/*
+ * Metabolic Simulator
+ * Copyright (C) 2026 Rick Theiner
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
+:root {
+  --bg: #f4f6f9;
+  --panel: #ffffff;
+  --border: #e2e6ec;
+  --ink: #1f2733;
+  --muted: #7a8594;
+  --accent: #2196F3;
+  --accent-d: #1976D2;
+  --shadow: 0 1px 3px rgba(20,30,50,.08), 0 6px 20px rgba(20,30,50,.05);
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+header { padding: 18px 24px 8px; }
+header h1 { margin: 0; font-size: 22px; }
+header .sub { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+
+.layout { display: grid; grid-template-columns: 340px 1fr; gap: 16px; padding: 12px 24px 40px; align-items: start; }
+@media (max-width: 980px) { .layout { grid-template-columns: 1fr; } }
+
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); }
+.inputs { padding: 16px; position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow-y: auto; }
+.results { padding: 16px; }
+
+h2 { font-size: 15px; margin: 4px 0 10px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+h3 { font-size: 14px; margin: 0 0 8px; }
+h3 .hint { font-weight: 400; color: var(--muted); font-size: 11px; }
+section { margin-bottom: 20px; }
+
+label { display: flex; flex-direction: column; font-size: 11px; color: var(--muted); gap: 3px; }
+input, select { font: inherit; padding: 6px 8px; border: 1px solid var(--border); border-radius: 7px; background: #fff; color: var(--ink); }
+input:focus, select:focus { outline: 2px solid rgba(33,150,243,.35); border-color: var(--accent); }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.span2 { grid-column: 1 / -1; }
+
+.derived { margin-top: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.derived div { background: #f7f9fc; border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; }
+.derived span { display: block; font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+.derived b { font-size: 13px; }
+
+.event-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.event { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  background: #f7f9fc; border: 1px solid var(--border); border-left: 3px solid var(--muted); border-radius: 8px; padding: 6px 8px; font-size: 12px; }
+.event.meal { border-left-color: #4CAF50; }
+.event.aerobic { border-left-color: #2196F3; }
+.event.resistance { border-left-color: #9C27B0; }
+.event.sleep { border-left-color: #3f5170; }
+.event .del { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 2px 4px; }
+.event .del:hover { color: #E53935; }
+
+.adder { margin-bottom: 12px; }
+.adder summary { cursor: pointer; font-weight: 600; color: var(--accent-d); padding: 4px 0; }
+.add-forms { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
+.add-block { background: #f7f9fc; border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
+.add-block strong { display: block; margin-bottom: 6px; font-size: 12px; }
+
+button { font: inherit; cursor: pointer; padding: 8px 12px; border: 1px solid var(--border);
+  border-radius: 8px; background: #fff; color: var(--ink); font-size: 12px; }
+button:hover { background: #f0f3f8; }
+button.primary, .add-block button { background: var(--accent); color: #fff; border-color: var(--accent-d); margin-top: 8px; }
+button.primary:hover, .add-block button:hover { background: var(--accent-d); }
+.btn-row { display: flex; gap: 8px; }
+
+.now-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; padding: 10px 12px;
+  background: #f7f9fc; border: 1px solid var(--border); border-radius: 10px; position: sticky; top: 0; z-index: 5; }
+.now-bar input[type=range] { flex: 1; accent-color: var(--accent); }
+.now-bar strong { font-variant-numeric: tabular-nums; }
+
+.chart-card { margin-bottom: 18px; }
+.chart-wrap { position: relative; height: 220px; }
+.chart-wrap.tall { height: 320px; }
+
+.status-card { background: linear-gradient(180deg,#fbfcfe,#f4f7fb); border: 1px solid var(--border);
+  border-radius: 10px; padding: 12px 14px; margin-bottom: 18px; }
+.status-head { font-size: 13px; margin-bottom: 10px; color: var(--muted); }
+.status-head b { color: var(--ink); }
+.status-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+.scell { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 6px 9px; }
+.scell span { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+.scell b { font-size: 13px; font-weight: 600; }
+
+.badge { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 10px; font-weight: 700; color: #fff; }
+.badge.replete { background: #2E7D32; }
+.badge.partial { background: #F9A825; color:#3b2f00; }
+.badge.low { background: #EF6C00; }
+.badge.depleted { background: #C62828; }
+
+.flags { margin-top: 10px; display: flex; flex-direction: column; gap: 5px; }
+.flag { font-size: 12px; background: #fff7e6; border: 1px solid #ffe0a3; color: #7a5b00; border-radius: 7px; padding: 5px 9px; }
+.flag.warn { background: #fdecec; border-color: #f5c2c2; color: #a12a2a; }
+
+.muted { color: var(--muted); }
+
+/* ---- CSV import ---- */
+.csv-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.csv-status { font-size: 11px; color: var(--muted); flex: 1 1 100%; }
+
+/* ---- continue / carry-over ---- */
+.scen-continue { flex-direction: row; align-items: flex-start; gap: 7px; font-size: 11px;
+  color: var(--ink); background: #f0f6ff; border: 1px solid #cfe0f5; border-radius: 8px;
+  padding: 7px 9px; margin-bottom: 10px; cursor: pointer; line-height: 1.35; }
+.scen-continue input { margin-top: 1px; flex-shrink: 0; }
+.continue-banner { background: #eef6ee; border: 1px solid #bcd9bc; color: #2c5e2c;
+  border-radius: 8px; padding: 8px 12px; margin-bottom: 14px; font-size: 12px; }
+
+/* ---- scenarios ---- */
+.scen-hint { font-size: 11px; color: var(--muted); margin: 0 0 8px; }
+.scen-save { display: flex; gap: 6px; margin-bottom: 8px; }
+.scen-save input { flex: 1; }
+.scenario-list { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
+.scenario { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  background: #f7f9fc; border: 1px solid var(--border); border-left: 3px solid var(--accent);
+  border-radius: 8px; padding: 6px 8px; font-size: 12px; }
+.scen-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scen-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.scen-actions button { padding: 3px 8px; font-size: 11px; }
+.scen-actions .del { background: none; border: none; color: var(--muted); padding: 2px 4px; }
+.scen-actions .del:hover { color: #E53935; }
+.scen-empty { font-size: 12px; padding: 2px 0; }
+.filebtn { display: inline-flex; align-items: center; cursor: pointer; font: inherit; font-size: 12px;
+  padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--ink); }
+.filebtn:hover { background: #f0f3f8; }
+
+/* ---- per-day schedule grouping ---- */
+.day-group { margin-bottom: 10px; }
+.day-head { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--accent-d); background: #eef4fb; border: 1px solid var(--border);
+  border-radius: 6px; padding: 3px 8px; margin-bottom: 5px; }
+.day-group .event { margin-bottom: 5px; }
+.event-empty { font-size: 11px; font-style: italic; padding: 2px 8px 6px; }
+.daysel { font-weight: 600; }

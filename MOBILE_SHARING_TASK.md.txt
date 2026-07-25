@@ -1,0 +1,133 @@
+﻿Task: Make the metabolic simulator phone-friendly and shareable via link
+Context
+This is a multi-day metabolic simulation web app — pure HTML/CSS/JS, no backend, no build step. It has been developed and used on a desktop browser only.
+
+
+Goal: host it as a static site (GitHub Pages) and share a single link with friends who will open it on iPhones and Android phones. It must work correctly on a phone, and the scenario export / import / chaining features must be reliable in the hands of people who did not build it.
+
+
+Work through the phases below in order. Do not skip Phase 0. Report findings after Phase 0 and Phase 1 before continuing — I want to review the state inventory and the round-trip result before you change behavior.
+
+
+________________
+
+
+Phase 0 — Discovery (report back, change nothing)
+1. Inventory the complete simulation state that carries between timesteps. Every variable the integrator depends on: glycogen compartments (liver/muscle separately if modeled), insulin, substrate pools, alcohol/acetate pools, gluconeogenic intermediates, any accumulators or rate-limiters, any time-since-X counters.
+2. List what the current export writes, and diff it against that inventory. Explicitly call out anything in the state vector that export currently omits.
+3. Identify how scenario chaining currently seeds a new run from a previous one, and whether it uses the same path as file import or a separate one.
+4. Note any inputs, tables, or controls that would be unusable on a 390px-wide screen.
+
+
+Output this as a short written report. No code changes yet.
+
+
+________________
+
+
+Phase 1 — Round-trip fidelity test
+Before fixing anything cosmetic, prove chaining is numerically sound.
+
+
+Write a test (a standalone HTML page or a console-runnable function is fine — this project has no test framework and does not need one) that:
+
+
+1. Runs a 48-hour scenario continuously with a fixed set of inputs. Record the full state at t=48h.
+2. Runs the same inputs for 24 hours. Exports. Imports that export as the starting point for a fresh run. Runs 24 more hours. Records the full state at t=48h.
+3. Compares the two state vectors variable by variable.
+
+
+They should match to floating-point tolerance, not merely look similar on a chart. Report any variable that diverges — that is a variable the export is dropping or mis-seeding. Fix those, then re-run until clean.
+
+
+________________
+
+
+Phase 2 — Scenario file format
+Restructure the export format with these properties:
+
+
+* schemaVersion integer field, starting at 1. Bump it whenever the format changes.
+* app identifier field so a file from some other program is rejected cleanly.
+* name and created (ISO timestamp) for human readability.
+* Export inputs, not the computed timeline. Meals with timing, exercise, body parameters, simulation settings, plus the carried-in initial state vector. The trajectory regenerates from those. Do not serialize the output curves — files stay small and survive model changes far better.
+* Initial state vector as an explicit named object, complete per the Phase 0 inventory.
+
+
+On import, validate before seeding the model:
+
+
+* Reject unknown app or a schemaVersion newer than this build understands.
+* Confirm every required field is present and every numeric field is finite. A missing field arriving as undefined must not reach the integrator — NaN propagates silently and produces curves that render fine and mean nothing.
+* On failure, show a readable message naming the specific problem. Never fail silently and never partially load.
+
+
+Filenames on export: scenario name + timestamp, sanitized — not export.json. People will accumulate several of these in Files.app.
+
+
+________________
+
+
+Phase 3 — Export / import mechanics on mobile
+Export. The Blob + <a download> pattern misbehaves on iOS Safari — it tends to open the file in a viewer rather than saving it. Use the Web Share API when available:
+
+
+if (navigator.canShare?.({ files: [file] })) {
+
+
+  await navigator.share({ files: [file] });
+
+
+} else {
+
+
+  // existing download-link path
+
+
+}
+
+
+Also add a "copy scenario to clipboard" button as a last-resort path, since some in-app browsers block both.
+
+
+Import. Keep <input type="file">, but widen the accept attribute — accept=".json,application/json,text/plain". A narrow accept=".json" greys out valid files in the iOS picker.
+
+
+________________
+
+
+Phase 4 — Data entry on touch
+* Add <meta name="viewport" content="width=device-width, initial-scale=1"> if absent.
+* Every input must be at least 16px font-size. Below that, iOS Safari zooms on focus and does not zoom back out.
+* Numeric fields: use inputmode="decimal" for the number pad. Prefer this over type="number", whose spinners are useless on touch and whose scroll-wheel behavior silently changes values. Add enterkeyhint="done".
+* Wide data tables: below ~600px, reflow each row into a stacked card. Editing in a horizontally-scrolling table on a phone is miserable.
+* Autosave on change rather than requiring a Save button — mobile Safari discards backgrounded tabs aggressively and a half-entered form will vanish.
+* Find any control that only appears on :hover (row delete buttons are the usual culprit). Those are invisible on touch. Make them always visible or tap-revealed.
+* Tap targets at least 44px.
+
+
+________________
+
+
+Phase 5 — Installable web app
+* Add manifest.json: name, short_name, display: "standalone", theme and background colors, and 192px + 512px icons.
+* Add an apple-touch-icon link — iOS ignores the manifest icons.
+* Do not add a service worker. Offline support is not worth pinning installed users to a stale cached version while I'm still changing the model. Everyone gets the current build on every open.
+
+
+________________
+
+
+Phase 6 — GitHub Pages readiness
+* All asset paths must be relative (./style.css, not /style.css). Pages serves from a subdirectory — absolute paths will 404.
+* Confirm no build step is required and index.html is at the repo root, or tell me what needs to move.
+* No mixed content: everything must load over HTTPS.
+
+
+________________
+
+
+Persistence note
+If the app uses localStorage or IndexedDB: iOS Safari evicts that after ~7 days without a visit, unless the app has been added to the home screen. Add a gentle prompt suggesting export if stored data is more than a few days old and hasn't been backed up.
+Known limitation — do not try to solve
+A web app on iOS cannot register as a handler for .json files. If someone AirDrops a scenario file, tapping it will not open this app. The flow is: open app → Import → pick from Files. I'll document that for users; don't attempt a workaround.

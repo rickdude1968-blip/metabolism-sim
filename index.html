@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<!--
+  Metabolic Simulator
+  Copyright (C) 2026 Rick Theiner
+
+  This program is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>5-Day Metabolism Simulator</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <h1>5-Day Metabolism Simulator</h1>
+    <p class="sub">A time-stepped model of substrate metabolism run continuously over 5&nbsp;days
+      (the daily schedule repeats), so glycogen, amino-acid, and calorie-balance
+      trends carry over night to night. Educational model — not medical or nutritional advice.</p>
+  </header>
+
+  <div class="layout">
+    <!-- ============ LEFT: inputs ============ -->
+    <aside class="panel inputs">
+      <section>
+        <h2>Profile</h2>
+        <div class="grid2">
+          <label>Weight (kg)<input id="pWeight" type="number" value="80" min="30" max="250" /></label>
+          <label>Height (cm)<input id="pHeight" type="number" value="175" min="120" max="230" /></label>
+          <label>Age<input id="pAge" type="number" value="35" min="12" max="100" /></label>
+          <label>Sex
+            <select id="pSex"><option value="male">Male</option><option value="female">Female</option></select>
+          </label>
+          <label class="span2">Training status
+            <select id="pTraining">
+              <option value="sedentary">Sedentary</option>
+              <option value="recreational" selected>Recreational</option>
+              <option value="trained">Trained</option>
+              <option value="athlete">Athlete</option>
+            </select>
+          </label>
+        </div>
+        <div id="derived" class="derived"></div>
+      </section>
+
+      <section>
+        <h2>Schedule</h2>
+        <div id="eventList" class="event-list"></div>
+
+        <details class="adder">
+          <summary>+ Add event</summary>
+          <div class="add-forms">
+            <div class="add-block">
+              <strong>Meal</strong>
+              <div class="grid2">
+                <label class="span2">Day
+                  <select id="mDay" class="daysel"></select>
+                </label>
+                <label>Name<input id="mName" type="text" value="Snack" /></label>
+                <label>Time<input id="mTime" type="time" value="15:30" /></label>
+                <label>kcal<input id="mKcal" type="number" value="300" /></label>
+                <label>Carbs g<input id="mCarb" type="number" value="35" /></label>
+                <label>Protein g<input id="mProt" type="number" value="15" /></label>
+                <label>Fat g<input id="mFat" type="number" value="10" /></label>
+                <label>Alcohol g<input id="mAlc" type="number" value="0" /></label>
+              </div>
+              <button data-add="meal">Add meal</button>
+            </div>
+            <div class="add-block">
+              <strong>Aerobic</strong>
+              <div class="grid2">
+                <label class="span2">Day
+                  <select id="aDay" class="daysel"></select>
+                </label>
+                <label>Start<input id="aStart" type="time" value="17:00" /></label>
+                <label>Duration min<input id="aDur" type="number" value="30" /></label>
+                <label class="span2">Intensity
+                  <select id="aInt"><option>light</option><option selected>moderate</option><option>vigorous</option></select>
+                </label>
+              </div>
+              <button data-add="aerobic">Add aerobic</button>
+            </div>
+            <div class="add-block">
+              <strong>Resistance</strong>
+              <div class="grid2">
+                <label class="span2">Day
+                  <select id="rDay" class="daysel"></select>
+                </label>
+                <label>Start<input id="rStart" type="time" value="17:00" /></label>
+                <label>Duration min<input id="rDur" type="number" value="45" /></label>
+                <label class="span2">Intensity
+                  <select id="rInt"><option>light</option><option selected>moderate</option><option>hard</option></select>
+                </label>
+              </div>
+              <button data-add="resistance">Add resistance</button>
+            </div>
+            <div class="add-block">
+              <strong>Sleep</strong>
+              <div class="grid2">
+                <label class="span2">Day
+                  <select id="sDay" class="daysel"></select>
+                </label>
+                <label>Start<input id="sStart" type="time" value="22:30" /></label>
+                <label>End<input id="sEnd" type="time" value="06:30" /></label>
+              </div>
+              <button data-add="sleep">Add sleep</button>
+            </div>
+          </div>
+        </details>
+
+        <div class="csv-row">
+          <label class="filebtn" title="Add events from a CSV file — existing events are kept">Import events CSV…
+            <input id="csvImport" type="file" accept=".csv,text/csv" hidden />
+          </label>
+          <span id="csvStatus" class="csv-status"></span>
+        </div>
+
+        <div class="btn-row">
+          <button id="runBtn" class="primary">Run simulation</button>
+          <button id="resetBtn">Reset to example</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Scenarios</h2>
+        <p class="scen-hint">Save the current profile + schedule so you can return to it later.</p>
+        <div class="scen-save">
+          <input id="scenName" type="text" placeholder="Name this scenario…" />
+          <button id="scenSave" class="primary">Save</button>
+        </div>
+        <div id="scenList" class="scenario-list"></div>
+        <label class="scen-continue" title="Charts reset to a fresh 5 days; glycogen, amino acids, and body fat start where the saved run ended">
+          <input type="checkbox" id="scenContinue" />
+          <span><b>Continue</b> — start the next 5 days from the saved end-state
+            (charts reset; glycogen &amp; body fat carry over)</span>
+        </label>
+        <div class="btn-row">
+          <button id="scenExport" title="Download the current setup as a .json file">Export file…</button>
+          <label class="filebtn" title="Load a scenario from a .json file">Import file…
+            <input id="scenImport" type="file" accept="application/json,.json" hidden />
+          </label>
+        </div>
+      </section>
+    </aside>
+
+    <!-- ============ RIGHT: charts + status ============ -->
+    <main class="panel results">
+      <div class="now-bar">
+        <label>Now: <strong id="nowLabel">D1 00:00</strong></label>
+        <input id="nowSlider" type="range" min="0" max="1439" value="0" />
+        <button id="playBtn">▶ Play</button>
+      </div>
+
+      <div id="continueBanner" class="continue-banner" style="display:none"></div>
+
+      <div class="chart-card">
+        <h3>1 · Substrate trace <span class="hint">where energy comes from (stacked %) + glycogen stores (dashed, right axis)</span></h3>
+        <div class="chart-wrap tall"><canvas id="chartTrace"></canvas></div>
+      </div>
+
+      <div class="status-card" id="statusPanel"></div>
+
+      <div class="chart-card">
+        <h3>2 · Insulin index &amp; blood-glucose proxy</h3>
+        <div class="chart-wrap"><canvas id="chartInsulin"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <h3>3 · Glycogen stores <span class="hint">dashed lines mark 50% and 20% of liver capacity</span></h3>
+        <div class="chart-wrap"><canvas id="chartGlycogen"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <h3>4 · Muscle protein synthesis (MPS)</h3>
+        <div class="chart-wrap"><canvas id="chartMps"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <h3>5 · Running calorie balance</h3>
+        <div class="chart-wrap"><canvas id="chartBalance"></canvas></div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Chart.js — vendored locally so the app works offline / from file://.
+       (Spec suggested the jsDelivr CDN; swap this line back if you prefer it.) -->
+  <script src="chart.umd.min.js"></script>
+  <script src="simulation.js"></script>
+  <script src="charts.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,432 @@
+# 5-Day Metabolism Simulator
+
+A single-page web application that simulates human substrate metabolism (which
+fuels the body burns, how blood sugar and insulin move, how glycogen stores
+rise and fall, and how muscle protein synthesis responds) across **5 days**.
+You build a **per-day schedule** of meals, exercise, and sleep — each day can
+differ — and it runs as **one continuous simulation** at 5-minute resolution
+(1,440 timesteps). Because it never resets between days, glycogen stores, the
+amino-acid pool, and the running calorie balance carry over from night to night
+— so you can watch multi-day cumulative trends emerge (e.g. a small daily
+deficit compounding, or a rest day letting glycogen recover).
+
+> **This is an educational model, not a medical or nutritional tool.** It uses
+> simplified, population-average equations from the exercise-physiology
+> literature. It cannot account for your individual biology, medical
+> conditions, or medications. **Do not use it to make health, diet, medication,
+> or training decisions.** For anything that matters to your health, talk to a
+> qualified professional.
+
+---
+
+## Table of contents
+1. [Quick start](#quick-start)
+2. [What's in the folder](#whats-in-the-folder)
+3. [How to use it](#how-to-use-it)
+4. [How the model works](#how-the-model-works)
+5. [The charts and status panel](#the-charts-and-status-panel)
+6. [Deliberate deviations from a literal reading of the spec](#deliberate-deviations)
+7. [Limitations (what it does NOT model)](#limitations)
+8. [System requirements & restrictions](#system-requirements--restrictions)
+9. [Possible errors & troubleshooting](#possible-errors--troubleshooting)
+10. [Customizing / editing the app](#customizing--editing-the-app)
+11. [Scientific references](#scientific-references)
+
+---
+
+## Quick start
+
+1. Make sure all files stay together in one folder (see below).
+2. **Double-click `index.html`.** It opens in your default web browser.
+3. The example day loads and runs automatically. Drag the **Now** slider (or
+   press **▶ Play**) to move through all 5 days and watch the numbers change.
+   The cursor position is labelled by day and time (e.g. "D3 13:00").
+
+No installation, no internet connection, and no server are required. It works
+on Windows, macOS, and Linux, and fully offline.
+
+---
+
+## What's in the folder
+
+All six files must travel together and keep their names. `index.html` loads the
+other five by their exact filenames, so renaming or separating them will break
+the app.
+
+| File | What it does |
+|------|--------------|
+| `index.html` | The page itself — layout, input controls, chart containers. **This is the file you open.** |
+| `simulation.js` | The metabolic model. Runs the 5-minute-step simulation and returns 1,440 timesteps (5 days) of data. The number of days is the `DAYS` constant near the top — change it to simulate a different span. |
+| `charts.js` | Draws the five charts using Chart.js, plus the meal/exercise/sleep shading and the draggable "now" cursor. |
+| `app.js` | Connects the buttons, sliders, and schedule builder to the model; writes the status panel. |
+| `styles.css` | Colors, layout, and styling. |
+| `chart.umd.min.js` | The Chart.js graphing library, bundled locally so no internet is needed. |
+| `README.md` | This file. |
+
+---
+
+## How to use it
+
+### Profile (top-left)
+Set body weight, height, age, sex, and training status. As you change these, the
+**derived constants** box updates live:
+
+- **BMR** — basal metabolic rate (Mifflin-St Jeor equation).
+- **Liver glycogen max** — fixed at 100 g.
+- **Muscle glycogen max** — scales with body weight and training status.
+- **Fat-oxidation capacity** — the ceiling on how fast you can burn body fat at
+  rest; higher for trained people.
+
+### Schedule (left)
+The schedule is **per day** — every event belongs to a specific day, so you can
+vary the five days however you like. The list is grouped into **Day 1 … Day 5**
+panels, and a sample week is preloaded (Day 3 is a rest day and Day 5 swaps the
+midday run for an evening resistance session, to show the variation).
+
+- **Each event carries both a time and a day.** When you add one under
+  **"+ Add event"** (meals, aerobic, resistance, or sleep), pick the **Day** from
+  the dropdown at the top of that form.
+- **"All days"** in the Day dropdown adds the event to every day at once. It
+  creates five independent copies — so you can afterwards tweak or delete any
+  single day's copy (e.g. add a run to all days, then remove it from Day 3).
+- **Remove** any event with the ✕ button; it only removes that day's copy.
+- Any time on a given day not covered by exercise or sleep is automatically
+  treated as **sedentary**.
+- The night before Day 1 is auto-primed from your Day 1 events, so the first
+  morning still starts realistically mid-sleep.
+
+Click **Run simulation** after editing to recompute. **Reset to example**
+restores the sample week and default profile.
+
+### Importing events from a CSV
+**Import events CSV…** adds events from a spreadsheet without touching anything
+already in the schedule (so if a row duplicates an existing event, delete one
+copy by hand afterwards). The importer reads these columns (matching the sample
+`Events.csv`):
+
+- **Total (x/o)** — a row is imported only if this is exactly `x`; anything else
+  is skipped (treated as a comment/alternative).
+- **Event** — must be `Meal`, `Aerobic`, `Resistance`, or `Sleep`; any other
+  value is ignored.
+- **Day** and **Time** (24-hour) apply to every event. Rows for a day beyond the
+  5-day window are skipped.
+- **Meal:** Name, Kcal, Prot, Carb, Fat, Alc — blanks count as 0.
+- **Aerobic / Resistance:** duration = End − Time (or 30 min if End is blank);
+  intensity comes from the **Exercise** column. Because the model uses different
+  scales, a Resistance `vigorous` becomes `hard` and an Aerobic `hard` becomes
+  `vigorous`; a blank/unrecognized intensity defaults to `moderate`.
+- **Sleep:** End is the wake time.
+
+After import you'll see a summary (how many events were added and how many rows
+were skipped); review the day-grouped list, remove any duplicates, then **Run
+simulation**.
+
+### Timeline (right)
+- The **Now** slider scrubs through all 5 days in 5-minute steps.
+- **▶ Play** animates the cursor automatically; press again to pause.
+- The vertical black line on every chart marks the current time, and the
+  **Status** panel is always describing that exact moment.
+
+### Saving scenarios (left, "Scenarios")
+Once you've built a profile + schedule you like, you can save it and return to
+it later without re-entering anything.
+
+- **Save:** type a name and click **Save**. The current profile and full
+  schedule are stored in your browser under that name. Saving again with the
+  same name overwrites it (after a confirm).
+- **Load / delete:** each saved scenario appears in the list with a **Load**
+  button (restores it and re-runs) and a ✕ to delete it.
+- **Export file… / Import file…:** save the current setup to a `.json` file on
+  disk, or load one back. Use this to **move scenarios between computers or
+  browsers**, or as a backup — the in-browser saves live only in the browser
+  that made them (clearing browser data erases them), whereas a `.json` file is
+  portable and permanent. Exported files from the two apps are interchangeable.
+- **Continue (carry the body over):** tick the **Continue** checkbox before you
+  Load or Import, and the next 5 days start from that scenario's *ending body
+  state* instead of a fresh, fully-fuelled start — liver & muscle glycogen, the
+  amino-acid pool, and body fat all pick up where the saved run left off. The
+  **charts reset** to a fresh 5-day window (calorie balance back to zero), but
+  the *status values carry over*, so you can chain week after week. A green
+  banner above the charts shows when a run is a continuation; **Reset to
+  example** clears it. (Scenarios saved before this feature have no stored
+  end-state — re-run and re-save them to enable Continue.)
+
+---
+
+## How the model works
+
+The engine divides the 5 days into **1,440 five-minute steps** (288 per day) and,
+at each step, computes everything in this order:
+
+1. **Gut absorption.** Each meal releases carbs, protein, and fat into the
+   bloodstream on gamma-shaped curves — carbs fastest (peak ~45 min), protein
+   slower (~90 min), fat slowest (~120 min, via the lymphatics). Alcohol, if
+   present, absorbs fastest of all.
+
+2. **Insulin index (0–10).** Absorbed carbs (and, less so, protein) drive
+   insulin up; between meals it decays with a ~90-minute time constant. Aerobic
+   exercise halves it (muscle can take up glucose without insulin). It never
+   falls below a fasting baseline of 0.5.
+
+3. **Energy demand.** Set by what you're doing — sleeping, sedentary, or
+   exercising at a given intensity (via MET multipliers on your BMR) — plus an
+   **EPOC** "afterburn" bump for up to 60–90 minutes after exercise.
+
+4. **Substrate selection.** This is the core. An exercise-intensity baseline
+   sets the fat-vs-carb split, then **insulin suppresses fat burning** (high
+   insulin → little fat oxidation). Carb energy is drawn in priority order from
+   gut glucose → liver glycogen → muscle glycogen → amino acids; fat energy from
+   dietary (gut) fat → body-fat stores.
+
+5. **Storage of surplus.** Absorbed nutrients that aren't burned refill muscle
+   and liver glycogen (muscle first when insulin is high — the "refuelling
+   window"), with any remainder going to fat.
+
+6. **Hepatic gluconeogenesis (GNG).** The liver continuously manufactures new
+   glucose from three precursors — **lactate** (Cori cycle, activity-driven,
+   with a post-exercise flush), **alanine** (from muscle protein, rising with
+   fasting duration and costing amino-acid pool), and **glycerol** (from fat
+   breakdown). When insulin is low (fasting/exercise) this glucose feeds blood
+   sugar directly — its own **brown band** on the chart — and any surplus
+   refills liver glycogen. This is why the liver doesn't sit empty between
+   meals, and why an overnight fast lands at ~40–65% liver glycogen by morning
+   rather than zero. When fasting or asleep, whole-body glucose use drops to the
+   obligate brain/red-cell need, spared by ketones as the fast deepens.
+
+7. **Alcohol**, when present, is burned at a fixed rate and **strongly
+   suppresses fat oxidation** while it's in the system.
+
+8. **Muscle protein synthesis (MPS)** runs as a parallel track. After resistance
+   training it **rises to a peak a few hours later, then decays back toward
+   baseline over ~24–48 h** (hard aerobic work gives a smaller, ~12 h bump) —
+   so a day-old session shows only a little residual elevation, not the full
+   peak. It's scaled by whether enough amino acids (protein) are available and
+   gets a boost during the deep-sleep growth-hormone window.
+
+9. **Sleep** is modeled as a fasting, fat-dominant state in which the liver
+   slowly exports glucose overnight (net of GNG) — which is why the liver store
+   is partly depleted by morning and breakfast refills it.
+
+Because it's a **deterministic** model, the same profile + schedule always
+produces exactly the same result.
+
+---
+
+## The charts and status panel
+
+| # | Chart | Shows |
+|---|-------|-------|
+| 1 | **Substrate trace** (primary) | Stacked % of energy from each fuel source at every moment, with liver and muscle glycogen levels overlaid as dashed lines (right axis). The fractions always sum to 100%. |
+| 2 | **Insulin & glucose** | Insulin index (0–10) plus a blood-glucose proxy (low / normal / elevated). |
+| 3 | **Glycogen stores** | Liver and muscle glycogen in grams, with dashed reference lines at 50% and 20% of liver capacity. |
+| 4 | **MPS activity** | Muscle-protein-synthesis rate over the 5 days. |
+| 5 | **Calorie balance** | Cumulative calories eaten vs. burned across the whole 5 days, shaded green (surplus) or red (deficit) — this is where a small daily deficit or surplus visibly compounds. |
+
+Every chart spans all 5 days left-to-right. The horizontal axis is labelled
+**"Day 1"…"Day 5"** at each midnight (with a 12:00 tick mid-day), and faint
+vertical lines mark the day boundaries. **Dashed vertical lines** mark meals,
+**blue/violet tint** marks exercise, **dark tint** marks the nightly sleep
+periods, and the **black line** is the draggable "now" cursor.
+
+The **Status panel** (below chart 1) translates the current moment into plain
+English: metabolic phase, dominant fuel, glycogen status, MPS status,
+gluconeogenesis rate, hours fasted, **glucose surplus (today)** and **body-fat
+store**, and context-specific **flags** (e.g. "Fat oxidation suppressed —
+insulin elevated," "Muscle glycogen replenishment window," "Alcohol present,"
+"Liver glycogen low").
+
+The **glucose surplus** figure is per-day: it's the glucose absorbed today that
+couldn't be burned or stored as glycogen (i.e. converted to fat via de-novo
+lipogenesis), and it **resets each midnight** — so a carb-heavy day flags a
+surplus that day without leaving the warning stuck on for the rest of the week.
+
+The **body-fat store** is a real reserve (estimated from your profile via the
+Deurenberg body-fat formula). It **goes up when you store fat** (surplus glucose
+or unburned dietary fat) and **down when you burn body fat**, so it drifts with
+the circumstances rather than only climbing. The "Δ … this run" shows the net
+change since the start of the current 5-day window; the absolute reserve carries
+over if you use **Continue**.
+
+---
+
+## Deliberate deviations
+
+A few intentional differences from a strictly literal reading of the original
+model spec, each chosen to make the app more correct or more usable:
+
+1. **Chart.js is bundled locally** (`chart.umd.min.js`) instead of being loaded
+   from an internet CDN. This is why the app works offline. If you would rather
+   load it from the internet, replace the `<script src="chart.umd.min.js">` line
+   near the bottom of `index.html` with
+   `<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>`.
+
+2. **During exercise, muscle glycogen is used before liver glycogen.** The spec
+   lists liver first in all cases, but working muscle actually burns its own
+   local glycogen, and the liver can only release glucose slowly (~1.5 g/min).
+   Using the strict order left muscle stores untouched even during a run, which
+   contradicted the expected behavior. At rest, the liver is still used first.
+
+3. **The absorption curve is mass-conserving.** The spec's literal formula
+   `grams × (τ/peak) × exp(1 − τ/peak) × (1/peak)` peaks at the right time but
+   its *area* is `grams × e` (~2.7×), so it would deliver ~2.7× the mass eaten
+   into circulation. Dropping the `exp(1)` factor normalizes the area to the
+   grams actually eaten. (This is the fix for the "alcohol takes days to clear"
+   bug — 70 g of ethanol now clears in ~12 h at the 0.1 g/min oxidation rate,
+   instead of the ~2.7× longer time the inflated absorption produced.)
+
+4. **Fat-oxidation capacity is read as g/min, not kcal/min.** The spec labels
+   `FAT_OXIDATION_CAPACITY` (0.07–0.15) as "kcal/min", but those numbers match
+   resting/Fatmax fat oxidation in **g/min** (Achten & Jeukendrup). Used as
+   kcal/min it capped fat burning at ~130 kcal/day — far too little to fuel
+   resting metabolism — so it is multiplied by 9 kcal/g. (With the old inflated
+   absorption this cap never mattered; once absorption was corrected, it did.)
+
+Also note: **insulin is calibrated** so a 60 g carbohydrate meal peaks the
+insulin index at about 4.5 (the spec's stated target of "~4–5"); the gain was
+re-tuned after fix #3 changed how much glucose actually reaches circulation.
+Insulin peaks roughly 90 minutes after a meal because the model tracks the
+*biological effect* of insulin, not the shorter-lived serum concentration.
+
+**Tip:** to watch the alcohol pool deplete directly, add a meal with alcohol,
+then drag the "now" cursor — the status panel shows **"Alcohol in system … g"**
+at every timestep while any ethanol remains.
+
+---
+
+## Limitations
+
+This is a teaching model. It deliberately simplifies or omits a great deal of
+real physiology. Among the larger simplifications:
+
+- **Population averages only.** The equations don't know your genetics, insulin
+  sensitivity, gut transit speed, body composition, hormones, medications, or
+  health conditions.
+- **Body-fat stores are treated as effectively unlimited** across the run; the
+  model tracks net fat storage but doesn't cap it.
+- **Insulin, glucose, and "insulin index" are proxies,** not measured
+  milli-unit or mg/dL values. The blood-glucose readout is a coarse
+  low/normal/elevated indicator, not a glucometer.
+- **Each day is what you schedule it to be**, but there is no longer-term
+  *adaptation* (fitness gains, changing insulin sensitivity, etc.) as the days
+  pass — the same event on Day 1 and Day 5 is modeled identically. What carries
+  over is the physical state: glycogen, amino-acid pool, and calorie balance
+  flow continuously across all 5 days. Glycogen starts full on the first
+  midnight, so Day 1 begins slightly "fresher" than later days.
+- **Absorption is idealized.** Fixed gamma curves regardless of meal size,
+  fiber, food matrix, or mixed-meal interactions. Very large meals absorb on the
+  same shaped curve as small ones.
+- **Fixed alcohol clearance** (~one drink/hour) regardless of body size or
+  tolerance; it does not model intoxication, impairment, or health effects.
+- **MPS and the "leucine threshold" are simplified** to a few rate tiers and a
+  single 20 g protein / ±2 h timing rule.
+- **No thermic effect of food, no micronutrients, no hydration, no fatigue, no
+  hormonal cycles, no training adaptation over the 5 days.**
+- The very first morning is primed with the previous evening's meal and
+  overnight sleep (so day 1 starts realistically mid-sleep rather than cold).
+
+If a number looks surprising, assume the model is being simplistic before
+assuming your body would behave that way.
+
+---
+
+## System requirements & restrictions
+
+- **A modern web browser** — Chrome, Edge, Firefox, or Safari from roughly the
+  last five years. Chart.js 4 needs a reasonably current browser.
+- **JavaScript must be enabled** (it is, by default, in normal browsers).
+- **Will not run in Internet Explorer.**
+- No internet, no account, no install, no admin rights, and no data leaves your
+  computer — everything runs locally in the browser.
+- Best viewed on a screen at least ~1000 px wide; it reflows to a single column
+  on narrow windows and phones, but the charts are easier to read on a laptop or
+  desktop.
+
+---
+
+## Possible errors & troubleshooting
+
+**The page is blank, unstyled, or the charts don't appear.**
+- The most common cause is that the files got separated. All six files must be
+  in the **same folder**, with their **original names**. If you copied only
+  `index.html`, go back and copy the whole folder.
+- Make sure you extracted the ZIP rather than opening `index.html` from *inside*
+  the ZIP viewer. Right-click the ZIP → **Extract All** first, then open the
+  extracted folder.
+
+**"Chart is not defined" or charts missing, everything else works.**
+- `chart.umd.min.js` is missing, renamed, or wasn't copied. Restore it to the
+  folder next to `index.html`.
+- If you switched the app to load Chart.js from the internet CDN, check that you
+  actually have an internet connection.
+
+**Nothing happens when I click "Run simulation," or numbers look frozen.**
+- Open the browser's developer console (**F12**, then the **Console** tab) and
+  look for red error text. Nine times out of ten it names a missing or renamed
+  file.
+
+**A chart is empty or a line is flat.**
+- That may be correct — e.g. muscle glycogen stays flat if you never exercise,
+  and MPS stays at baseline with no resistance training. Add the relevant event
+  and click **Run simulation**.
+- Check that meal/exercise **times are valid** and that durations are positive
+  numbers.
+
+**I entered a meal but the totals don't match the macros.**
+- The app uses the macro grams (carb/protein/fat/alcohol) you enter to drive
+  metabolism; the "kcal" field is only used for the calorie-balance chart. They
+  won't perfectly agree unless your kcal equals 4×carbs + 4×protein + 9×fat +
+  7×alcohol. Enter whichever you care about most.
+
+**The results look extreme or physically impossible.**
+- Check your inputs for typos (e.g. 700 g of carbs instead of 70). The model
+  will faithfully simulate nonsense inputs.
+
+**A security prompt appears when opening the file.**
+- Some setups warn before opening local HTML. It is a normal static web page
+  and safe to open. If your organization blocks local HTML entirely, ask your
+  IT department, or serve the folder over a simple local web server.
+
+**It won't open from a network drive or cloud-sync folder.**
+- Copy the folder to a local disk (e.g. your Desktop or Documents) and open it
+  from there.
+
+**Advanced: running via a local server (optional).**
+- The app is designed to open directly (`file://`) with no server. If you ever
+  need one, from inside the folder run `python -m http.server 8000` and visit
+  `http://localhost:8000/` in your browser.
+
+---
+
+## Customizing / editing the app
+
+All files are plain text — edit them with any code or text editor (VS Code,
+Notepad++, etc.). Nothing needs to be "compiled."
+
+- **Change the default day or default profile:** edit `DEFAULT_SCHEDULE` and
+  `DEFAULT_PROFILE` near the bottom of `simulation.js`.
+- **Tune the physiology** (absorption speeds, insulin behavior, MET values, fat
+  fractions, MPS rates): all live in `simulation.js`, with comments pointing to
+  the relevant part of the model.
+- **Change colors or layout:** `styles.css` for the page, and the `COLORS`
+  object at the top of `charts.js` for the chart fuel colors.
+
+After any edit, just refresh the browser (no build step).
+
+---
+
+## Scientific references
+
+The model draws on standard exercise-physiology and nutrition sources,
+including: Mifflin-St Jeor (BMR); McArdle, Katch & Katch, *Exercise Physiology*,
+8th ed. (glycogen); Bergström et al. 1967 and Hawley et al. 1997 (muscle
+glycogen); Achten & Jeukendrup 2004 (Fatmax / fat oxidation); Brooks & Mercier
+1994 (crossover concept); Sidossis & Wolfe 1996, Wolfe 1998 (insulin and fat
+oxidation); Richter & Hargreaves 2013 (exercise glucose uptake); Boirie et al.
+1997, Dangin et al. 2001 (protein kinetics); Fielding et al. 1996 (chylomicrons);
+Wahren et al. 1971 (hepatic glucose output); Børsheim & Bahr 2003 (EPOC); Siler
+et al. 1999, Shelmet et al. 1988 (alcohol metabolism); Norton & Layman 2006,
+Churchward-Venne et al. 2012 (leucine / MPS).
+
+These are cited to indicate the *origin of the model's assumptions*; the
+implementation is a simplified approximation and should not be taken as a
+faithful reproduction of any single study.
