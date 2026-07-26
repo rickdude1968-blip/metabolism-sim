@@ -146,10 +146,45 @@ it later without re-entering anything.
   state* instead of a fresh, fully-fuelled start — liver & muscle glycogen, the
   amino-acid pool, and body fat all pick up where the saved run left off. The
   **charts reset** to a fresh 5-day window (calorie balance back to zero), but
-  the *status values carry over*, so you can chain week after week. A green
+  the *status values carry over*, so you can chain block after block. A green
   banner above the charts shows when a run is a continuation; **Reset to
-  example** clears it. (Scenarios saved before this feature have no stored
-  end-state — re-run and re-save them to enable Continue.)
+  example** clears it.
+
+  Continuation is **numerically exact**: a chained run reproduces an
+  uninterrupted one variable-for-variable (verified by `test/roundtrip-test.html`,
+  which compares all 18 state and trajectory variables across the seam). That
+  works because the file also carries **`carryInEvents`** — the real meals,
+  workouts and sleep from the 48 h before the boundary. Those are what let the
+  new block get gut absorption still in flight, the muscle-protein-synthesis
+  window, EPOC and the lactate flush exactly right; the six body-state numbers
+  alone cannot express them.
+
+### The scenario file format (schema v1)
+Exported `.json` files store **inputs only** — never the computed curves — so
+they stay small (~6 KB) and keep working as the model changes:
+
+| Field | Purpose |
+|---|---|
+| `schemaVersion` | Format version (currently `1`). A file from a newer version is refused rather than half-read. |
+| `app` | `"metabolism-simulator"`. Files from other programs are rejected cleanly. Both editions share this ID, so exports are interchangeable between them. |
+| `name`, `created` | Human-readable label and ISO timestamp. |
+| `profile` | Body parameters. |
+| `settings` | Simulation settings (Metabolism-EDU stores its meal-timing offset here; the plain simulator ignores it). |
+| `schedule` | Your meals / exercise / sleep events. |
+| `initialState` | The six carried body-state values, or `null`. |
+| `carryInEvents` | Real trailing events from the previous block, or `null`. |
+
+Files are named from the scenario name plus a timestamp
+(`My_Week_1_2026-07-21_1432.json`), so they stay distinguishable once several
+pile up.
+
+**Import is validated before anything is loaded.** A file with the wrong `app`,
+a too-new `schemaVersion`, a missing field, or a non-numeric value is rejected
+with a message naming the specific problem (e.g. *"initialState.insulin must be
+a finite number"*). Nothing is ever partially applied — a half-loaded scenario
+would otherwise reach the model as `NaN` and produce curves that look fine and
+mean nothing. Older files saved before this format are still accepted, with a
+note that their continuation will be approximate across the seam.
 
 ---
 

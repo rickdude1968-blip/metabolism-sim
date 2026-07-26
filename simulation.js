@@ -124,7 +124,13 @@
   const RESIST_MET = { light: 3.0, moderate: 5.0, hard: 6.5 };
   const AEROBIC_FATFRAC = { light: 0.65, moderate: 0.45, vigorous: 0.20 };
 
-  function buildTimeline(schedule) {
+  // `carryIn` (optional) is the list of REAL trailing events from a previous
+  // block, each with `minutesBefore` = how long before this run's t=0 it began.
+  // Pass an array (possibly empty) to mark this as a CONTINUED run: the
+  // fabricated "night before day 1" priming is then suppressed, because the
+  // carried state plus these real events already describe the history.
+  // Pass null/undefined for a fresh run, which keeps the priming fiction.
+  function buildTimeline(schedule, carryIn) {
     const meals = [], aerobics = [], resistances = [], sleeps = [];
 
     // Place one event at ABSOLUTE minutes, based on its (1-indexed) day.
@@ -151,10 +157,35 @@
       }
     }
 
+    // Place a carry-in event at NEGATIVE absolute minutes, `minutesBefore`
+    // ahead of this run's t=0.
+    function placeCarryIn(ev) {
+      const at = -Math.abs(+ev.minutesBefore || 0);
+      if (ev.type === 'meal') meals.push({
+        min: at, day: 0, carryIn: true,
+        kcal: +ev.kcal || 0, carbs: +ev.carbs || 0, protein: +ev.protein || 0,
+        fat: +ev.fat || 0, alcohol: +ev.alcohol || 0, name: ev.name || 'Meal'
+      });
+      else if (ev.type === 'aerobic') aerobics.push({
+        start: at, dur: +ev.duration || 0, intensity: ev.intensity, day: 0, carryIn: true
+      });
+      else if (ev.type === 'resistance') resistances.push({
+        start: at, dur: +ev.duration || 0, intensity: ev.intensity, day: 0, carryIn: true
+      });
+      else if (ev.type === 'sleep') sleeps.push({
+        start: at, end: at + (+ev.duration || 0), day: 0, carryIn: true
+      });
+    }
+
     for (const ev of schedule) place(ev);
-    // Prime the night before day 1 using day-1 events shifted back one day, so
-    // the first morning inherits overnight sleep + the prior evening's meals.
-    for (const ev of schedule) if ((+ev.day || 1) === 1) place(ev, 0);
+    if (carryIn) {
+      // Continued run — real history, no fabrication.
+      for (const ev of carryIn) placeCarryIn(ev);
+    } else {
+      // Fresh run — prime the night before day 1 using day-1 events shifted back
+      // one day, so the first morning inherits overnight sleep + prior meals.
+      for (const ev of schedule) if ((+ev.day || 1) === 1) place(ev, 0);
+    }
 
     meals.sort((a, b) => a.min - b.min);
     const totalMin = MINS_PER_DAY * DAYS;
@@ -168,6 +199,33 @@
       meals, aerobics, resistances, sleeps,
       totalMin
     };
+  }
+
+  // Harvest the real trailing events around a boundary so the NEXT block can
+  // reproduce this one's history exactly. 48 h covers every history-dependent
+  // mechanism in the model: MPS elevation (48 h), absorption tails (<=6 h),
+  // EPOC (90 min) and the Cori-cycle lactate flush (120 min).
+  const CARRY_IN_WINDOW = 2880;                       // minutes (48 h)
+  function buildCarryIn(tl, boundaryMin, windowMin) {
+    const W = windowMin || CARRY_IN_WINDOW;
+    const out = [];
+    const near = t => t <= boundaryMin && (boundaryMin - t) <= W;
+    for (const m of tl.meals) if (near(m.min)) out.push({
+      type: 'meal', minutesBefore: boundaryMin - m.min, name: m.name,
+      kcal: m.kcal, carbs: m.carbs, protein: m.protein, fat: m.fat, alcohol: m.alcohol
+    });
+    for (const e of tl.aerobics) if (near(e.start)) out.push({
+      type: 'aerobic', minutesBefore: boundaryMin - e.start, duration: e.dur, intensity: e.intensity
+    });
+    for (const e of tl.resistances) if (near(e.start)) out.push({
+      type: 'resistance', minutesBefore: boundaryMin - e.start, duration: e.dur, intensity: e.intensity
+    });
+    // Only a sleep still in progress at the boundary matters (the sleeper wakes
+    // up inside the next block); earlier sleeps can't affect any future step.
+    for (const s of tl.sleeps) if (s.start <= boundaryMin && s.end > boundaryMin) out.push({
+      type: 'sleep', minutesBefore: boundaryMin - s.start, duration: s.end - s.start
+    });
+    return out;
   }
 
   // Determine what the body is doing at minute m.
@@ -254,9 +312,11 @@
   // `initialState` (optional) seeds the starting body state so a run can
   // CONTINUE from a previous one: glycogen / amino pool / insulin / alcohol /
   // body fat carry over, while the charts and cumulative counters reset fresh.
-  function runSimulation(profile, schedule, initialState) {
+  function runSimulation(profile, schedule, initialState, carryInEvents) {
     const C = computeConstants(profile);
-    const tl = buildTimeline(schedule);
+    // Supplying an initialState marks this as a CONTINUED run, which suppresses
+    // the fabricated day-0 priming; carryInEvents then supply the real history.
+    const tl = buildTimeline(schedule, initialState ? (carryInEvents || []) : null);
     // Overall leucine verdict across the real (within-window) resistance sessions:
     // null = no resistance training; true = every session well-timed; false = one or more missed.
     const realRes = tl.resistances.filter(r => r.start >= 0 && r.start < tl.totalMin);
@@ -584,8 +644,10 @@
     out.constants = C;
     out.leucineMet = leucine;
     out.timeline = tl;
-    // End-of-run body state, for CONTINUE-ing into another 5-day block.
+    // End-of-run body state + the real trailing events, so another block can
+    // CONTINUE from here and reproduce this run's history exactly.
     out.endState = { liver, muscle, aminoPool, insulin, alcoholInSystem, fatStored_g };
+    out.carryIn = buildCarryIn(tl, tl.totalMin);
     out.fatStartReserve = fatStartReserve;
     return out;
   }
@@ -618,6 +680,8 @@
   }
 
   window.runSimulation = runSimulation;
+  window.buildTimeline = buildTimeline;
+  window.buildCarryIn = buildCarryIn;
   window.computeConstants = computeConstants;
   window.DEFAULT_PROFILE = DEFAULT_PROFILE;
   window.DEFAULT_SCHEDULE = DEFAULT_SCHEDULE;

@@ -26,6 +26,7 @@
   let simData = null;
   let playTimer = null;
   let carryOverState = null;   // when set, the next run continues from this body state
+  let carryOverCarryIn = null; // real trailing events from the previous block
   const STEPS = window.SIM_STEPS || 288;
 
   const $ = id => document.getElementById(id);
@@ -112,7 +113,7 @@
 
   // ---- run --------------------------------------------------------------
   function run() {
-    simData = window.runSimulation(readProfile(), schedule, carryOverState);
+    simData = window.runSimulation(readProfile(), schedule, carryOverState, carryOverCarryIn);
     window.renderCharts(simData);
     setNow(+$('nowSlider').value);
     updateContinueBanner();
@@ -200,37 +201,177 @@
     try { localStorage.setItem(STORE_KEY, JSON.stringify(o)); return true; }
     catch (e) { alert('Browser storage is unavailable, so in-app saving won\'t work here. Use "Export file…" instead to save a scenario to disk.'); return false; }
   }
-  function currentSnapshot() {
-    return { app: 'metabolism-sim', profile: readProfile(),
-             schedule: JSON.parse(JSON.stringify(schedule)),
-             endState: (simData && simData.endState) ? simData.endState : null,
-             savedAt: new Date().toISOString() };
+  // ---- scenario file format, schema v1 ----------------------------------
+  // Stores INPUTS ONLY (profile, schedule, settings) plus the carried-in state.
+  // The trajectory is never serialized — it regenerates, so files stay small
+  // and survive model changes.
+  const SCHEMA_VERSION = 1;
+  const APP_ID = 'metabolism-simulator';                  // shared by both editions
+  const LEGACY_APP_IDS = ['metabolism-sim', 'metabolism-edu'];   // pre-v1 exports
+  const STATE_FIELDS = ['liver', 'muscle', 'aminoPool', 'insulin', 'alcoholInSystem', 'fatStored_g'];
+  const TRAININGS = ['sedentary', 'recreational', 'trained', 'athlete'];
+  const EVENT_TYPES = ['meal', 'aerobic', 'resistance', 'sleep'];
+  const INTENSITIES = { aerobic: ['light', 'moderate', 'vigorous'], resistance: ['light', 'moderate', 'hard'] };
+
+  const isNum = v => typeof v === 'number' && isFinite(v);
+  const isHHMM = v => typeof v === 'string' && /^\d{1,2}:\d{2}$/.test(v);
+  const show = v => JSON.stringify(v === undefined ? null : v);
+
+  function currentSnapshot(name) {
+    return {
+      schemaVersion: SCHEMA_VERSION,
+      app: APP_ID,
+      name: name || ($('scenName').value || '').trim() || 'scenario',
+      created: new Date().toISOString(),
+      profile: readProfile(),
+      settings: {},
+      schedule: JSON.parse(JSON.stringify(schedule)),
+      // Carried-in body state + the real trailing events that reproduce history.
+      initialState: (simData && simData.endState) ? simData.endState : null,
+      carryInEvents: (simData && simData.carryIn) ? simData.carryIn : null
+    };
   }
-  function applySnapshot(snap) {
-    if (!snap || !Array.isArray(snap.schedule)) { alert('That file is not a valid scenario.'); return; }
-    const p = snap.profile || {};
-    if (p.weight) $('pWeight').value = p.weight;
-    if (p.height) $('pHeight').value = p.height;
-    if (p.age) $('pAge').value = p.age;
-    if (p.sex) $('pSex').value = p.sex;
-    if (p.training) $('pTraining').value = p.training;
-    schedule = JSON.parse(JSON.stringify(snap.schedule));
+
+  // Validate a raw parsed object and return a normalized scenario.
+  // Throws Error with a readable, specific message. Never partially applies:
+  // callers only touch app state after this returns successfully.
+  function parseScenario(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+      throw new Error('That file does not contain a scenario object.');
+
+    // --- identity gate (checked first, so a foreign file fails fast) -----
+    const gate = [];
+    if (raw.app === undefined) gate.push('it has no "app" field, so it may not be a scenario file');
+    else if (raw.app !== APP_ID && LEGACY_APP_IDS.indexOf(raw.app) < 0)
+      gate.push('it was written by a different program (app = ' + show(raw.app) + ')');
+    const ver = raw.schemaVersion === undefined ? 0 : raw.schemaVersion;
+    if (!(isNum(ver) && Math.floor(ver) === ver && ver >= 0))
+      gate.push('"schemaVersion" must be a whole number (got ' + show(raw.schemaVersion) + ')');
+    else if (ver > SCHEMA_VERSION)
+      gate.push('it uses format version ' + ver + ', but this build only understands up to ' +
+                SCHEMA_VERSION + ' — update the app to open it');
+    if (gate.length) throw new Error('Cannot open this scenario: ' + gate.join('; ') + '.');
+
+    const bad = [];
+
+    // --- profile ---------------------------------------------------------
+    const p = raw.profile;
+    if (!p || typeof p !== 'object') bad.push('"profile" is missing');
+    else {
+      [['weight', 20, 400], ['height', 80, 260], ['age', 5, 120]].forEach(([k, lo, hi]) => {
+        if (!isNum(p[k])) bad.push('profile.' + k + ' must be a finite number (got ' + show(p[k]) + ')');
+        else if (p[k] < lo || p[k] > hi) bad.push('profile.' + k + ' = ' + p[k] + ' is outside the plausible range ' + lo + '–' + hi);
+      });
+      if (p.sex !== 'male' && p.sex !== 'female') bad.push('profile.sex must be "male" or "female" (got ' + show(p.sex) + ')');
+      if (TRAININGS.indexOf(p.training) < 0) bad.push('profile.training must be one of ' + TRAININGS.join(' / ') + ' (got ' + show(p.training) + ')');
+    }
+
+    // --- schedule --------------------------------------------------------
+    if (!Array.isArray(raw.schedule)) bad.push('"schedule" is missing or is not a list of events');
+    else raw.schedule.forEach((ev, i) => {
+      const at = 'schedule[' + i + ']';
+      if (!ev || typeof ev !== 'object') { bad.push(at + ' is not an event object'); return; }
+      if (EVENT_TYPES.indexOf(ev.type) < 0) { bad.push(at + '.type must be one of ' + EVENT_TYPES.join(' / ') + ' (got ' + show(ev.type) + ')'); return; }
+      if (ev.day !== undefined && !(isNum(ev.day) && ev.day >= 1)) bad.push(at + '.day must be a positive number (got ' + show(ev.day) + ')');
+      if (ev.type === 'meal') {
+        if (!isHHMM(ev.time)) bad.push(at + '.time must be "HH:MM" (got ' + show(ev.time) + ')');
+        ['kcal', 'carbs', 'protein', 'fat', 'alcohol'].forEach(k => {
+          if (ev[k] !== undefined && !isNum(ev[k])) bad.push(at + '.' + k + ' must be a finite number (got ' + show(ev[k]) + ')');
+        });
+      } else if (ev.type === 'sleep') {
+        if (!isHHMM(ev.start)) bad.push(at + '.start must be "HH:MM" (got ' + show(ev.start) + ')');
+        if (!isHHMM(ev.end)) bad.push(at + '.end must be "HH:MM" (got ' + show(ev.end) + ')');
+      } else {
+        if (!isHHMM(ev.start)) bad.push(at + '.start must be "HH:MM" (got ' + show(ev.start) + ')');
+        if (!(isNum(ev.duration) && ev.duration > 0)) bad.push(at + '.duration must be a positive number of minutes (got ' + show(ev.duration) + ')');
+        if (INTENSITIES[ev.type].indexOf(ev.intensity) < 0)
+          bad.push(at + '.intensity must be one of ' + INTENSITIES[ev.type].join(' / ') + ' (got ' + show(ev.intensity) + ')');
+      }
+    });
+
+    // --- initial state (optional, but must be COMPLETE if present) -------
+    // A missing field arriving as undefined would become NaN inside the
+    // integrator and silently produce curves that render fine and mean nothing.
+    const rawState = ver === 0 ? raw.endState : raw.initialState;
+    let initialState = null;
+    if (rawState !== undefined && rawState !== null) {
+      if (typeof rawState !== 'object' || Array.isArray(rawState)) bad.push('"initialState" must be an object');
+      else {
+        initialState = {};
+        STATE_FIELDS.forEach(k => {
+          if (!isNum(rawState[k])) bad.push('initialState.' + k + ' must be a finite number (got ' + show(rawState[k]) + ') — an incomplete state would produce meaningless results');
+          else initialState[k] = rawState[k];
+        });
+      }
+    }
+
+    // --- carry-in events (optional) --------------------------------------
+    let carryInEvents = null;
+    if (raw.carryInEvents !== undefined && raw.carryInEvents !== null) {
+      if (!Array.isArray(raw.carryInEvents)) bad.push('"carryInEvents" must be a list');
+      else {
+        carryInEvents = [];
+        raw.carryInEvents.forEach((ev, i) => {
+          const at = 'carryInEvents[' + i + ']';
+          if (!ev || typeof ev !== 'object') { bad.push(at + ' is not an event object'); return; }
+          if (EVENT_TYPES.indexOf(ev.type) < 0) { bad.push(at + '.type must be one of ' + EVENT_TYPES.join(' / ') + ' (got ' + show(ev.type) + ')'); return; }
+          if (!(isNum(ev.minutesBefore) && ev.minutesBefore >= 0)) bad.push(at + '.minutesBefore must be a number >= 0 (got ' + show(ev.minutesBefore) + ')');
+          if (ev.type !== 'meal' && !(isNum(ev.duration) && ev.duration > 0)) bad.push(at + '.duration must be a positive number (got ' + show(ev.duration) + ')');
+          if (ev.type === 'meal') ['kcal', 'carbs', 'protein', 'fat', 'alcohol'].forEach(k => {
+            if (ev[k] !== undefined && !isNum(ev[k])) bad.push(at + '.' + k + ' must be a finite number (got ' + show(ev[k]) + ')');
+          });
+          carryInEvents.push(ev);
+        });
+      }
+    }
+
+    if (bad.length) {
+      const shown = bad.slice(0, 6).join('\n• ');
+      throw new Error('This scenario file has ' + bad.length + ' problem' + (bad.length > 1 ? 's' : '') +
+        ' and was not loaded:\n\n• ' + shown + (bad.length > 6 ? '\n• …and ' + (bad.length - 6) + ' more' : ''));
+    }
+
+    return {
+      schemaVersion: SCHEMA_VERSION, app: APP_ID,
+      name: typeof raw.name === 'string' ? raw.name : '',
+      created: typeof raw.created === 'string' ? raw.created : (raw.savedAt || ''),
+      profile: p, settings: (raw.settings && typeof raw.settings === 'object') ? raw.settings : {},
+      schedule: raw.schedule, initialState, carryInEvents
+    };
+  }
+
+  // Apply an already-parsed scenario. Only called after validation succeeds.
+  function applyScenario(scn) {
+    const p = scn.profile;
+    $('pWeight').value = p.weight; $('pHeight').value = p.height; $('pAge').value = p.age;
+    $('pSex').value = p.sex; $('pTraining').value = p.training;
+    schedule = JSON.parse(JSON.stringify(scn.schedule));
     // "Continue" starts the next 5 days from the saved end-state; otherwise fresh.
     const wantContinue = $('scenContinue') && $('scenContinue').checked;
-    if (wantContinue && snap.endState) carryOverState = snap.endState;
-    else {
-      carryOverState = null;
-      if (wantContinue && !snap.endState)
-        alert('This scenario was saved before "Continue" was supported (no end-state stored), so it will load fresh. Re-run and re-save it to enable continuation.');
+    if (wantContinue && scn.initialState) {
+      carryOverState = scn.initialState;
+      carryOverCarryIn = scn.carryInEvents || [];
+      if (!scn.carryInEvents)
+        alert('Continuing, but this file predates carry-in events: the first few hours after the seam will be approximate. Re-run and re-save to get an exact continuation.');
+    } else {
+      carryOverState = null; carryOverCarryIn = null;
+      if (wantContinue && !scn.initialState)
+        alert('This scenario has no saved end-state, so it will load fresh. Run it, save it again, then Continue will work.');
     }
     renderList(); showDerived(); run();
+  }
+
+  // Back-compat wrapper used by the in-app saved list.
+  function applySnapshot(raw) {
+    let scn; try { scn = parseScenario(raw); } catch (e) { alert(e.message); return; }
+    applyScenario(scn);
   }
   function renderScenarios() {
     const store = loadStore();
     const names = Object.keys(store).sort((a, b) => a.localeCompare(b));
     $('scenList').innerHTML = names.length
       ? names.map((n, i) => {
-          const when = store[n].savedAt ? new Date(store[n].savedAt).toLocaleString() : '';
+          const when = (store[n].created || store[n].savedAt) ? new Date(store[n].created || store[n].savedAt).toLocaleString() : '';
           return `<div class="scenario"><span class="scen-name" title="saved ${esc(when)}">${esc(n)}</span>` +
                  `<span class="scen-actions"><button data-i="${i}" data-act="load">Load</button>` +
                  `<button class="del" data-i="${i}" data-act="del" title="delete">✕</button></span></div>`;
@@ -247,24 +388,39 @@
     if (!name) { $('scenName').focus(); return; }
     const store = loadStore();
     if (store[name] && !confirm(`Overwrite the saved scenario "${name}"?`)) return;
-    store[name] = currentSnapshot();
+    store[name] = currentSnapshot(name);
     if (saveStore(store)) { $('scenName').value = ''; renderScenarios(); }
+  }
+  // Filename = scenario name + timestamp, sanitized. People accumulate several
+  // of these, so "export.json" would be useless.
+  function scenarioFilename(name, iso) {
+    const d = iso ? new Date(iso) : new Date();
+    const p = n => String(n).padStart(2, '0');
+    const stamp = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
+                  '_' + p(d.getHours()) + p(d.getMinutes());
+    const safe = (name || 'scenario').replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'scenario';
+    return safe + '_' + stamp + '.json';
   }
   function exportScenario() {
     const name = ($('scenName').value || '').trim() || 'scenario';
-    const data = currentSnapshot(); data.name = name;
+    const data = currentSnapshot(name);
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = name.replace(/[^\w.-]+/g, '_') + '.json';
+    a.href = url; a.download = scenarioFilename(name, data.created);
     document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
   }
   function importScenario(file) {
     const reader = new FileReader();
+    reader.onerror = () => alert('Could not read that file.');
     reader.onload = () => {
-      let snap; try { snap = JSON.parse(reader.result); } catch (e) { alert('Could not read that file — it is not valid scenario JSON.'); return; }
-      applySnapshot(snap);
-      if (snap.name) $('scenName').value = snap.name;
+      let raw;
+      try { raw = JSON.parse(reader.result); }
+      catch (e) { alert('That file is not valid JSON, so it could not be opened.\n\n(' + e.message + ')'); return; }
+      let scn;
+      try { scn = parseScenario(raw); } catch (e) { alert(e.message); return; }
+      applyScenario(scn);
+      if (scn.name) $('scenName').value = scn.name;
     };
     reader.readAsText(file);
   }
@@ -367,7 +523,7 @@
     $('playBtn').onclick = togglePlay;
     $('resetBtn').onclick = () => {
       schedule = JSON.parse(JSON.stringify(window.DEFAULT_SCHEDULE));
-      carryOverState = null;                                  // back to a fresh body
+      carryOverState = null; carryOverCarryIn = null;         // back to a fresh body
       if ($('scenContinue')) $('scenContinue').checked = false;
       $('pWeight').value = 80; $('pHeight').value = 175; $('pAge').value = 35;
       $('pSex').value = 'male'; $('pTraining').value = 'recreational';
