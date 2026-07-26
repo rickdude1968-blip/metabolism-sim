@@ -151,6 +151,54 @@ button.primary:hover, .add-block button:hover { background: var(--accent-d); }
 /* 16px keeps iOS Safari from zooming in on focus and never zooming back out. */
 @media (max-width: 600px) { .scen-text textarea { font-size: 16px; } }
 
+/* ---- stale-storage nudge ---- */
+.backup-note { display: flex; align-items: flex-start; gap: 8px; font-size: 11px;
+  background: #fff7e6; border: 1px solid #ffe0a3; color: #7a5b00;
+  border-radius: 8px; padding: 7px 9px; margin-bottom: 10px; line-height: 1.35; }
+.backup-note button { flex-shrink: 0; padding: 3px 8px; font-size: 11px; }
+
+/* =========================================================================
+   Touch and small-screen data entry
+   ========================================================================= */
+
+/* Once the layout collapses to one column the sidebar has to scroll with the
+   page. Left sticky with a capped height it became its own scroll box and the
+   results panel drew straight over it. */
+@media (max-width: 980px) {
+  .inputs { position: static; max-height: none; overflow-y: visible; }
+  .layout { padding: 12px 12px 32px; }
+  header { padding: 14px 12px 6px; }
+}
+
+@media (max-width: 600px) {
+  /* Paired numeric fields get too narrow to read or tap side by side. */
+  .grid2 { grid-template-columns: 1fr; }
+  .btn-row, .scen-save, .now-bar { flex-wrap: wrap; }
+  .scen-save input { flex: 1 1 100%; }
+  .now-bar input[type=range] { flex: 1 1 100%; order: 3; }
+  /* Repeated here as well as under (pointer: coarse) so the iOS zoom-on-focus
+     trap is closed even if a browser misreports its pointer type. */
+  input, select, textarea { font-size: 16px; }
+}
+
+/* Touch devices at any width — an iPad in landscape is wider than the
+   breakpoints above but still needs both of these.
+   16px: iOS Safari zooms in on any focused field below it and never zooms back
+   out. 44px: the smallest reliably tappable target. */
+@media (pointer: coarse) {
+  input, select, textarea { font-size: 16px; min-height: 44px; }
+  input[type=checkbox] { min-height: 0; width: 22px; height: 22px; }
+  input[type=range] { min-height: 44px; }
+  button, .filebtn { min-height: 44px; padding: 11px 14px; font-size: 15px; }
+  .scen-actions button { padding: 11px 12px; font-size: 14px; }
+  /* Delete buttons are the usual too-small target; they are always visible
+     here (never hover-revealed), just tiny. */
+  .event .del, .scen-actions .del { min-width: 44px; font-size: 18px; }
+  .adder summary { min-height: 44px; display: flex; align-items: center; font-size: 15px; }
+  label { font-size: 12px; }
+  .event { padding: 9px 10px; font-size: 13px; }
+}
+
 /* ---- per-day schedule grouping ---- */
 .day-group { margin-bottom: 10px; }
 .day-head { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;

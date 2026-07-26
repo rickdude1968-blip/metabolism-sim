@@ -37,9 +37,12 @@
       <section>
         <h2>Profile</h2>
         <div class="grid2">
-          <label>Weight (kg)<input id="pWeight" type="number" value="80" min="30" max="250" /></label>
-          <label>Height (cm)<input id="pHeight" type="number" value="175" min="120" max="230" /></label>
-          <label>Age<input id="pAge" type="number" value="35" min="12" max="100" /></label>
+          <!-- text + inputmode="decimal" rather than type="number": the spinners are
+               useless on touch and the scroll-wheel silently changes values. Ranges are
+               clamped in readProfile() instead of by min/max. -->
+          <label>Weight (kg)<input id="pWeight" type="text" inputmode="decimal" enterkeyhint="done" value="80" /></label>
+          <label>Height (cm)<input id="pHeight" type="text" inputmode="decimal" enterkeyhint="done" value="175" /></label>
+          <label>Age<input id="pAge" type="text" inputmode="decimal" enterkeyhint="done" value="35" /></label>
           <label>Sex
             <select id="pSex"><option value="male">Male</option><option value="female">Female</option></select>
           </label>
@@ -68,13 +71,13 @@
                 <label class="span2">Day
                   <select id="mDay" class="daysel"></select>
                 </label>
-                <label>Name<input id="mName" type="text" value="Snack" /></label>
+                <label>Name<input id="mName" type="text" enterkeyhint="done" value="Snack" /></label>
                 <label>Time<input id="mTime" type="time" value="15:30" /></label>
-                <label>kcal<input id="mKcal" type="number" value="300" /></label>
-                <label>Carbs g<input id="mCarb" type="number" value="35" /></label>
-                <label>Protein g<input id="mProt" type="number" value="15" /></label>
-                <label>Fat g<input id="mFat" type="number" value="10" /></label>
-                <label>Alcohol g<input id="mAlc" type="number" value="0" /></label>
+                <label>kcal<input id="mKcal" type="text" inputmode="decimal" enterkeyhint="done" value="300" /></label>
+                <label>Carbs g<input id="mCarb" type="text" inputmode="decimal" enterkeyhint="done" value="35" /></label>
+                <label>Protein g<input id="mProt" type="text" inputmode="decimal" enterkeyhint="done" value="15" /></label>
+                <label>Fat g<input id="mFat" type="text" inputmode="decimal" enterkeyhint="done" value="10" /></label>
+                <label>Alcohol g<input id="mAlc" type="text" inputmode="decimal" enterkeyhint="done" value="0" /></label>
               </div>
               <button data-add="meal">Add meal</button>
             </div>
@@ -85,7 +88,7 @@
                   <select id="aDay" class="daysel"></select>
                 </label>
                 <label>Start<input id="aStart" type="time" value="17:00" /></label>
-                <label>Duration min<input id="aDur" type="number" value="30" /></label>
+                <label>Duration min<input id="aDur" type="text" inputmode="decimal" enterkeyhint="done" value="30" /></label>
                 <label class="span2">Intensity
                   <select id="aInt"><option>light</option><option selected>moderate</option><option>vigorous</option></select>
                 </label>
@@ -99,7 +102,7 @@
                   <select id="rDay" class="daysel"></select>
                 </label>
                 <label>Start<input id="rStart" type="time" value="17:00" /></label>
-                <label>Duration min<input id="rDur" type="number" value="45" /></label>
+                <label>Duration min<input id="rDur" type="text" inputmode="decimal" enterkeyhint="done" value="45" /></label>
                 <label class="span2">Intensity
                   <select id="rInt"><option>light</option><option selected>moderate</option><option>hard</option></select>
                 </label>
@@ -137,10 +140,11 @@
         <h2>Scenarios</h2>
         <p class="scen-hint">Save the current profile + schedule so you can return to it later.</p>
         <div class="scen-save">
-          <input id="scenName" type="text" placeholder="Name this scenario…" />
+          <input id="scenName" type="text" enterkeyhint="done" placeholder="Name this scenario…" />
           <button id="scenSave" class="primary">Save</button>
         </div>
         <div id="scenList" class="scenario-list"></div>
+        <div id="backupNote" class="backup-note" hidden></div>
         <label class="scen-continue" title="Charts reset to a fresh 5 days; glycogen, amino acids, and body fat start where the saved run ended">
           <input type="checkbox" id="scenContinue" />
           <span><b>Continue</b> — start the next 5 days from the saved end-state

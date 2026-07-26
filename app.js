@@ -32,9 +32,28 @@
   const $ = id => document.getElementById(id);
 
   // ---- profile read / derived constants ---------------------------------
+  // The numeric fields are type="text" + inputmode="decimal", so their value can
+  // be anything the user typed — including "" mid-edit or plain nonsense. A
+  // non-finite number reaching the integrator would produce NaN curves that
+  // render fine and mean nothing, so every read goes through here.
+  // The comma swap covers keyboards that emit a decimal comma.
+  function numField(id, fallback, lo, hi) {
+    const el = $(id);
+    const v = parseFloat(String(el ? el.value : '').replace(',', '.'));
+    if (!isFinite(v)) return fallback;
+    if (lo !== undefined && v < lo) return lo;
+    if (hi !== undefined && v > hi) return hi;
+    return v;
+  }
+  // Shared with parseScenario's import checks so a typed value and an imported
+  // one are held to the same range — otherwise a file could display one weight
+  // and silently simulate another.
+  const PROFILE_RANGES = { weight: [20, 400], height: [80, 260], age: [5, 120] };
   function readProfile() {
     return {
-      weight: +$('pWeight').value, height: +$('pHeight').value, age: +$('pAge').value,
+      weight: numField('pWeight', 80, PROFILE_RANGES.weight[0], PROFILE_RANGES.weight[1]),
+      height: numField('pHeight', 175, PROFILE_RANGES.height[0], PROFILE_RANGES.height[1]),
+      age: numField('pAge', 35, PROFILE_RANGES.age[0], PROFILE_RANGES.age[1]),
       sex: $('pSex').value, training: $('pTraining').value
     };
   }
@@ -78,7 +97,7 @@
     }
     $('eventList').innerHTML = html;
     $('eventList').querySelectorAll('[data-del]').forEach(b =>
-      b.onclick = () => { schedule.splice(+b.dataset.del, 1); renderList(); });
+      b.onclick = () => { schedule.splice(+b.dataset.del, 1); renderList(); saveWorking(); });
   }
 
   // Populate every "Day" dropdown with "All days" + Day 1..DAYS
@@ -101,12 +120,13 @@
         const t = btn.dataset.add;
         let base, daySel;
         if (t === 'meal') { daySel = 'mDay'; base = { type: 'meal', name: $('mName').value || 'Meal', time: $('mTime').value,
-          kcal: +$('mKcal').value, carbs: +$('mCarb').value, protein: +$('mProt').value, fat: +$('mFat').value, alcohol: +$('mAlc').value }; }
-        else if (t === 'aerobic') { daySel = 'aDay'; base = { type: 'aerobic', start: $('aStart').value, duration: +$('aDur').value, intensity: $('aInt').value }; }
-        else if (t === 'resistance') { daySel = 'rDay'; base = { type: 'resistance', start: $('rStart').value, duration: +$('rDur').value, intensity: $('rInt').value }; }
+          kcal: numField('mKcal', 0, 0), carbs: numField('mCarb', 0, 0), protein: numField('mProt', 0, 0),
+          fat: numField('mFat', 0, 0), alcohol: numField('mAlc', 0, 0) }; }
+        else if (t === 'aerobic') { daySel = 'aDay'; base = { type: 'aerobic', start: $('aStart').value, duration: numField('aDur', 30, 1), intensity: $('aInt').value }; }
+        else if (t === 'resistance') { daySel = 'rDay'; base = { type: 'resistance', start: $('rStart').value, duration: numField('rDur', 45, 1), intensity: $('rInt').value }; }
         else if (t === 'sleep') { daySel = 'sDay'; base = { type: 'sleep', start: $('sStart').value, end: $('sEnd').value }; }
         for (const day of daysFrom(daySel)) schedule.push(Object.assign({ day }, base));
-        renderList();
+        renderList(); saveWorking();
       };
     });
   }
@@ -258,7 +278,8 @@
     const p = raw.profile;
     if (!p || typeof p !== 'object') bad.push('"profile" is missing');
     else {
-      [['weight', 20, 400], ['height', 80, 260], ['age', 5, 120]].forEach(([k, lo, hi]) => {
+      Object.keys(PROFILE_RANGES).forEach(k => {
+        const lo = PROFILE_RANGES[k][0], hi = PROFILE_RANGES[k][1];
         if (!isNum(p[k])) bad.push('profile.' + k + ' must be a finite number (got ' + show(p[k]) + ')');
         else if (p[k] < lo || p[k] > hi) bad.push('profile.' + k + ' = ' + p[k] + ' is outside the plausible range ' + lo + '–' + hi);
       });
@@ -358,7 +379,111 @@
       if (wantContinue && !scn.initialState)
         alert('This scenario has no saved end-state, so it will load fresh. Run it, save it again, then Continue will work.');
     }
-    renderList(); showDerived(); run();
+    renderList(); showDerived(); run(); flushWorking();
+  }
+
+  // ---- autosave of the in-progress working state ------------------------
+  // Separate from the named-scenario list: this is the "don't lose my typing"
+  // net. Mobile Safari discards backgrounded tabs aggressively, so every change
+  // is persisted rather than waiting for a Save button.
+  const WORK_KEY = 'metabolismSim.working.v1';
+  const SINCE_KEY = 'metabolismSim.storedSince.v1';   // when autosave first wrote anything
+  const BACKUP_KEY = 'metabolismSim.lastBackup.v1';   // last successful export / share / copy
+  const DISMISS_KEY = 'metabolismSim.backupNoteDismissed';
+  const DAY_MS = 86400000, STALE_DAYS = 3;
+  // The add-event forms are the half-entered forms most likely to be lost.
+  const DRAFT_FIELDS = ['mDay', 'mName', 'mTime', 'mKcal', 'mCarb', 'mProt', 'mFat', 'mAlc',
+                        'aDay', 'aStart', 'aDur', 'aInt', 'rDay', 'rStart', 'rDur', 'rInt',
+                        'sDay', 'sStart', 'sEnd'];
+  let workTimer = null;
+
+  function readDraft() {
+    const d = {};
+    DRAFT_FIELDS.forEach(id => { if ($(id)) d[id] = String($(id).value); });
+    return d;
+  }
+  function applyDraft(d) {
+    if (!d || typeof d !== 'object') return;
+    DRAFT_FIELDS.forEach(id => { if ($(id) && typeof d[id] === 'string') $(id).value = d[id]; });
+  }
+  // Shaped like a scenario file so restore can reuse parseScenario's validation.
+  // Stores the ACTIVE carry-over, not simData.endState — otherwise a plain
+  // reload would silently turn a fresh run into a continued one.
+  function workingSnapshot() {
+    return {
+      schemaVersion: SCHEMA_VERSION, app: APP_ID,
+      name: ($('scenName').value || '').trim(),
+      created: new Date().toISOString(),
+      profile: readProfile(), settings: {},
+      schedule: JSON.parse(JSON.stringify(schedule)),
+      initialState: carryOverState, carryInEvents: carryOverCarryIn,
+      draft: readDraft()
+    };
+  }
+  function writeWorking() {
+    try {
+      localStorage.setItem(WORK_KEY, JSON.stringify(workingSnapshot()));
+      if (!localStorage.getItem(SINCE_KEY)) localStorage.setItem(SINCE_KEY, new Date().toISOString());
+    } catch (e) { /* private mode or quota — autosave is best-effort */ }
+  }
+  function saveWorking() {
+    if (workTimer) clearTimeout(workTimer);
+    workTimer = setTimeout(() => { workTimer = null; writeWorking(); }, 400);
+  }
+  function flushWorking() {
+    if (workTimer) { clearTimeout(workTimer); workTimer = null; }
+    writeWorking();
+  }
+  // Restore returns true only if something was actually loaded. Anything stale or
+  // corrupt falls through to the defaults rather than half-applying.
+  function restoreWorking() {
+    let raw;
+    try { raw = JSON.parse(localStorage.getItem(WORK_KEY)); } catch (e) { return false; }
+    if (!raw) return false;
+    let scn;
+    try { scn = parseScenario(raw); } catch (e) { return false; }
+    const p = scn.profile;
+    $('pWeight').value = p.weight; $('pHeight').value = p.height; $('pAge').value = p.age;
+    $('pSex').value = p.sex; $('pTraining').value = p.training;
+    schedule = JSON.parse(JSON.stringify(scn.schedule));
+    carryOverState = scn.initialState; carryOverCarryIn = scn.carryInEvents;
+    if (scn.name) $('scenName').value = scn.name;
+    applyDraft(raw.draft);
+    return true;
+  }
+
+  // ---- stale-storage nudge ----------------------------------------------
+  // iOS Safari evicts localStorage after ~7 days without a visit unless the app
+  // has been added to the home screen, so work that only ever lived in the
+  // browser can simply disappear. Suggest a real export before that happens.
+  function markBackedUp() {
+    try { localStorage.setItem(BACKUP_KEY, new Date().toISOString()); } catch (e) { /* best-effort */ }
+    hideBackupNote();
+  }
+  function hideBackupNote() { const el = $('backupNote'); if (el) el.hidden = true; }
+  function maybeWarnStale() {
+    const el = $('backupNote');
+    if (!el) return;
+    let since, backup, dismissed;
+    try {
+      since = localStorage.getItem(SINCE_KEY);
+      backup = localStorage.getItem(BACKUP_KEY);
+      dismissed = sessionStorage.getItem(DISMISS_KEY);
+    } catch (e) { return; }          // no storage at all: nothing to lose, nothing to warn about
+    if (!since || dismissed) return;
+    const age = Date.now() - new Date(since).getTime();
+    if (!isFinite(age) || age < STALE_DAYS * DAY_MS) return;
+    const backupAge = backup ? Date.now() - new Date(backup).getTime() : Infinity;
+    if (isFinite(backupAge) && backupAge < STALE_DAYS * DAY_MS) return;
+    const days = Math.floor(age / DAY_MS);
+    el.innerHTML = '<span>This browser has been holding your work for ' + days + ' days with no export. ' +
+      'Phone browsers clear stored data on their own — use <b>Export / share…</b> to keep a copy.</span>' +
+      '<button type="button" id="backupNoteHide">Dismiss</button>';
+    el.hidden = false;
+    $('backupNoteHide').onclick = () => {
+      try { sessionStorage.setItem(DISMISS_KEY, '1'); } catch (e) { /* best-effort */ }
+      hideBackupNote();
+    };
   }
 
   // Back-compat wrapper used by the in-app saved list.
@@ -412,6 +537,7 @@
     document.body.appendChild(a); a.click(); a.remove();
     // Revoking immediately cancels the download in Safari — let the click settle.
     setTimeout(() => URL.revokeObjectURL(url), 30000);
+    markBackedUp();
     scenStatus('Saved ' + filename + '. If it opened in a viewer instead of saving, use "Copy as text".');
   }
 
@@ -439,7 +565,7 @@
     if (canShareFiles(file)) {
       scenStatus('Opening the share sheet — choose "Save to Files" to keep it.');
       navigator.share({ files: [file], title: data.name }).then(
-        () => scenStatus('Shared ' + filename + '.'),
+        () => { markBackedUp(); scenStatus('Shared ' + filename + '.'); },
         e => {
           if (e && e.name === 'AbortError') { scenStatus(''); return; }  // user dismissed the sheet
           downloadScenario(text, filename);
@@ -469,7 +595,7 @@
     const name = ($('scenName').value || '').trim() || 'scenario';
     const text = JSON.stringify(currentSnapshot(name), null, 2);
     const kb = Math.max(1, Math.round(text.length / 1024));
-    const done = () => { hideScenText(); scenStatus('Scenario copied (' + kb + ' KB of text). Paste it into a note or a message; load it back with "Paste text…".'); };
+    const done = () => { hideScenText(); markBackedUp(); scenStatus('Scenario copied (' + kb + ' KB of text). Paste it into a note or a message; load it back with "Paste text…".'); };
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(done, () => showForManualCopy(text));
     } else if (execCopy(text)) { done(); }
@@ -609,7 +735,7 @@
         } else { ignored++; }                                                       // Column C not an event
       }
 
-      renderList();
+      renderList(); saveWorking();
       const bits = [`Imported ${added} event${added !== 1 ? 's' : ''}`];
       if (ignored) bits.push(`${ignored} row${ignored !== 1 ? 's' : ''} skipped`);
       if (outOfRange) bits.push(`${outOfRange} beyond day ${DAYS} skipped`);
@@ -621,7 +747,13 @@
   // ---- init --------------------------------------------------------------
   function init() {
     $('nowSlider').max = STEPS - 1;   // span the full multi-day window
-    ['pWeight', 'pHeight', 'pAge', 'pSex', 'pTraining'].forEach(id => $(id).addEventListener('input', showDerived));
+    fillDaySelects();                 // day selects must exist before a draft is restored
+    const restored = restoreWorking();
+
+    ['pWeight', 'pHeight', 'pAge', 'pSex', 'pTraining'].forEach(id =>
+      $(id).addEventListener('input', () => { showDerived(); saveWorking(); }));
+    DRAFT_FIELDS.forEach(id => { if ($(id)) $(id).addEventListener('input', saveWorking); });
+    $('scenName').addEventListener('input', saveWorking);
     $('nowSlider').addEventListener('input', e => setNow(+e.target.value));
     $('runBtn').onclick = run;
     $('playBtn').onclick = togglePlay;
@@ -631,15 +763,23 @@
       if ($('scenContinue')) $('scenContinue').checked = false;
       $('pWeight').value = 80; $('pHeight').value = 175; $('pAge').value = 35;
       $('pSex').value = 'male'; $('pTraining').value = 'recreational';
-      renderList(); showDerived(); run();
+      renderList(); showDerived(); run(); flushWorking();
     };
     $('csvImport').addEventListener('change', e => { if (e.target.files[0]) importEventsCsv(e.target.files[0]); e.target.value = ''; });
-    fillDaySelects();
+
+    // Last chance to persist: mobile Safari may never fire unload before it
+    // discards a backgrounded tab, but it does fire these.
+    document.addEventListener('visibilitychange', () => { if (document.hidden) flushWorking(); });
+    window.addEventListener('pagehide', flushWorking);
+
     wireAdders();
     wireScenarios();
     renderList();
     showDerived();
     run();
+    if (restored) scenStatus('Restored your unsaved work from this browser.');
+    else flushWorking();
+    maybeWarnStale();
   }
 
   document.addEventListener('DOMContentLoaded', init);
