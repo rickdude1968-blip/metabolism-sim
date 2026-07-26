@@ -49,6 +49,7 @@ deficit compounding, or a rest day letting glycogen recover).
 9. [Possible errors & troubleshooting](#possible-errors--troubleshooting)
 10. [Customizing / editing the app](#customizing--editing-the-app)
 11. [Scientific references](#scientific-references)
+12. [License](#license)
 
 ---
 
@@ -505,3 +506,16 @@ Churchward-Venne et al. 2012 (leucine / MPS).
 These are cited to indicate the *origin of the model's assumptions*; the
 implementation is a simplified approximation and should not be taken as a
 faithful reproduction of any single study.
+
+---
+
+## License
+
+Copyright (C) 2026 Rick Theiner
+
+This program is free software: you can redistribute it and/or modify it
+under the terms of the GNU General Public License version 3, as published
+by the Free Software Foundation. See [LICENSE](LICENSE) for the full text.
+
+This program is distributed WITHOUT ANY WARRANTY. It is intended for
+educational and exploratory use and is not medical advice.
