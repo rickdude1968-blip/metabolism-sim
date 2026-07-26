@@ -122,7 +122,7 @@
 
         <div class="csv-row">
           <label class="filebtn" title="Add events from a CSV file — existing events are kept">Import events CSV…
-            <input id="csvImport" type="file" accept=".csv,text/csv" hidden />
+            <input id="csvImport" type="file" accept=".csv,text/csv,text/plain" hidden />
           </label>
           <span id="csvStatus" class="csv-status"></span>
         </div>
@@ -147,11 +147,25 @@
             (charts reset; glycogen &amp; body fat carry over)</span>
         </label>
         <div class="btn-row">
-          <button id="scenExport" title="Download the current setup as a .json file">Export file…</button>
+          <button id="scenExport" title="Save or share the current setup as a .json file">Export / share…</button>
           <label class="filebtn" title="Load a scenario from a .json file">Import file…
-            <input id="scenImport" type="file" accept="application/json,.json" hidden />
+            <input id="scenImport" type="file" accept=".json,application/json,text/plain" hidden />
           </label>
         </div>
+        <div class="btn-row scen-textrow">
+          <button id="scenCopy" title="Copy the scenario as text — works even where saving and sharing are blocked">Copy as text</button>
+          <button id="scenPasteOpen" title="Load a scenario from text you copied elsewhere">Paste text…</button>
+        </div>
+        <div id="scenTextWrap" class="scen-text" hidden>
+          <p id="scenTextHint" class="scen-hint"></p>
+          <textarea id="scenTextBox" rows="5" spellcheck="false" autocapitalize="off"
+                    autocorrect="off" placeholder="Paste scenario text here…"></textarea>
+          <div class="btn-row">
+            <button id="scenTextLoad" class="primary">Load pasted text</button>
+            <button id="scenTextClose">Close</button>
+          </div>
+        </div>
+        <div id="scenFileStatus" class="scen-status" role="status" aria-live="polite"></div>
       </section>
     </aside>
 

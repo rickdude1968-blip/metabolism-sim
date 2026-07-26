@@ -140,6 +140,16 @@ button.primary:hover, .add-block button:hover { background: var(--accent-d); }
 .filebtn { display: inline-flex; align-items: center; cursor: pointer; font: inherit; font-size: 12px;
   padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--ink); }
 .filebtn:hover { background: #f0f3f8; }
+.scen-textrow { margin-top: 6px; }
+.scen-status { font-size: 11px; color: var(--muted); margin-top: 6px; }
+.scen-status:empty { display: none; }
+.scen-text { margin-top: 8px; background: #f7f9fc; border: 1px solid var(--border);
+  border-radius: 8px; padding: 9px; }
+.scen-text .scen-hint { margin-bottom: 6px; }
+.scen-text textarea { width: 100%; resize: vertical; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  padding: 6px 8px; border: 1px solid var(--border); border-radius: 7px; background: #fff; color: var(--ink); }
+/* 16px keeps iOS Safari from zooming in on focus and never zooming back out. */
+@media (max-width: 600px) { .scen-text textarea { font-size: 16px; } }
 
 /* ---- per-day schedule grouping ---- */
 .day-group { margin-bottom: 10px; }

@@ -401,26 +401,126 @@
     const safe = (name || 'scenario').replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'scenario';
     return safe + '_' + stamp + '.json';
   }
+  function scenStatus(msg) { const el = $('scenFileStatus'); if (el) el.textContent = msg || ''; }
+
+  // Download via <a download>. Works everywhere except iOS Safari, which tends
+  // to open the file in a viewer instead of saving it — hence the share path below.
+  function downloadScenario(text, filename) {
+    const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; a.rel = 'noopener';
+    document.body.appendChild(a); a.click(); a.remove();
+    // Revoking immediately cancels the download in Safari — let the click settle.
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+    scenStatus('Saved ' + filename + '. If it opened in a viewer instead of saving, use "Copy as text".');
+  }
+
+  // On touch devices the Web Share sheet is the only reliable way to get a file
+  // into Files.app / Drive. On a desktop it would replace a working one-click
+  // download with an OS share dialog that often cannot save to disk at all, so
+  // the share path is deliberately limited to coarse-pointer devices.
+  function canShareFiles(file) {
+    if (!file || !navigator.canShare || !navigator.share) return false;
+    if (!window.matchMedia || !window.matchMedia('(pointer: coarse)').matches) return false;
+    try { return navigator.canShare({ files: [file] }); } catch (e) { return false; }
+  }
+
   function exportScenario() {
     const name = ($('scenName').value || '').trim() || 'scenario';
     const data = currentSnapshot(name);
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = scenarioFilename(name, data.created);
-    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    const text = JSON.stringify(data, null, 2);
+    const filename = scenarioFilename(name, data.created);
+
+    let file = null;
+    try { file = new File([text], filename, { type: 'application/json' }); } catch (e) { /* no File constructor */ }
+
+    // navigator.share must be reached without an intervening await, or the
+    // browser treats the call as gestureless and rejects it.
+    if (canShareFiles(file)) {
+      scenStatus('Opening the share sheet — choose "Save to Files" to keep it.');
+      navigator.share({ files: [file], title: data.name }).then(
+        () => scenStatus('Shared ' + filename + '.'),
+        e => {
+          if (e && e.name === 'AbortError') { scenStatus(''); return; }  // user dismissed the sheet
+          downloadScenario(text, filename);
+        });
+      return;
+    }
+    downloadScenario(text, filename);
   }
+
+  // ---- clipboard export (last resort) -----------------------------------
+  // Some in-app browsers (Instagram, Facebook, several email clients) block
+  // both downloads and the share sheet. Text always survives.
+  function execCopy(text) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;';
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    ta.setSelectionRange(0, text.length);   // iOS ignores select() alone
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    ta.remove();
+    return ok;
+  }
+  function copyScenarioText() {
+    const name = ($('scenName').value || '').trim() || 'scenario';
+    const text = JSON.stringify(currentSnapshot(name), null, 2);
+    const kb = Math.max(1, Math.round(text.length / 1024));
+    const done = () => { hideScenText(); scenStatus('Scenario copied (' + kb + ' KB of text). Paste it into a note or a message; load it back with "Paste text…".'); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, () => showForManualCopy(text));
+    } else if (execCopy(text)) { done(); }
+    else showForManualCopy(text);
+  }
+  function showForManualCopy(text) {
+    showScenText('Copying automatically was blocked here. The scenario text is below — select all of it, copy, and keep it somewhere safe.', text, false);
+    scenStatus('');
+  }
+
+  // ---- text panel, shared by manual copy and paste-to-load --------------
+  function showScenText(hint, value, showLoad) {
+    $('scenTextHint').textContent = hint;
+    $('scenTextBox').value = value || '';
+    $('scenTextLoad').hidden = !showLoad;
+    $('scenTextWrap').hidden = false;
+    $('scenTextBox').focus();
+    if (!showLoad) $('scenTextBox').select();
+  }
+  function hideScenText() {
+    $('scenTextWrap').hidden = true;
+    $('scenTextBox').value = '';
+  }
+
+  // Parse + validate + apply. Returns the scenario on success, null on failure;
+  // nothing is applied unless validation passed.
+  function loadScenarioText(text, sourceLabel) {
+    let raw;
+    try { raw = JSON.parse(text); }
+    catch (e) { alert('That ' + sourceLabel + ' is not valid JSON, so it could not be opened.\n\n(' + e.message + ')'); return null; }
+    let scn;
+    try { scn = parseScenario(raw); } catch (e) { alert(e.message); return null; }
+    applyScenario(scn);
+    if (scn.name) $('scenName').value = scn.name;
+    return scn;
+  }
+  function loadPastedScenario() {
+    const text = $('scenTextBox').value.trim();
+    if (!text) { $('scenTextBox').focus(); return; }
+    const scn = loadScenarioText(text, 'text');
+    if (!scn) return;
+    hideScenText();
+    scenStatus('Loaded ' + (scn.name ? '"' + scn.name + '"' : 'scenario') + ' from pasted text.');
+  }
+
   function importScenario(file) {
     const reader = new FileReader();
     reader.onerror = () => alert('Could not read that file.');
     reader.onload = () => {
-      let raw;
-      try { raw = JSON.parse(reader.result); }
-      catch (e) { alert('That file is not valid JSON, so it could not be opened.\n\n(' + e.message + ')'); return; }
-      let scn;
-      try { scn = parseScenario(raw); } catch (e) { alert(e.message); return; }
-      applyScenario(scn);
-      if (scn.name) $('scenName').value = scn.name;
+      const scn = loadScenarioText(String(reader.result), 'file');
+      if (scn) scenStatus('Loaded ' + (scn.name ? '"' + scn.name + '"' : 'scenario') + ' from ' + file.name + '.');
     };
     reader.readAsText(file);
   }
@@ -429,6 +529,10 @@
     $('scenName').addEventListener('keydown', e => { if (e.key === 'Enter') saveScenario(); });
     $('scenExport').onclick = exportScenario;
     $('scenImport').addEventListener('change', e => { if (e.target.files[0]) importScenario(e.target.files[0]); e.target.value = ''; });
+    $('scenCopy').onclick = copyScenarioText;
+    $('scenPasteOpen').onclick = () => showScenText('Paste the scenario text you copied, then load it.', '', true);
+    $('scenTextLoad').onclick = loadPastedScenario;
+    $('scenTextClose').onclick = hideScenText;
     renderScenarios();
   }
 
