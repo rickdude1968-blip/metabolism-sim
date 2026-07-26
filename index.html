@@ -40,6 +40,11 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <!-- Everything above the tab bar scrolls inside here. On narrow screens the
+       body is a 100dvh flex column, this is the flexible scrolling child, and
+       the tab bar is a normal last child rather than position:fixed — so the
+       bar's placement never depends on the viewport being reported correctly. -->
+  <div id="appScroll">
   <header>
     <h1>5-Day Metabolism Simulator</h1>
     <p class="sub">A time-stepped model of substrate metabolism run continuously over 5&nbsp;days
@@ -232,6 +237,7 @@
       </div><!-- /#tabOutput -->
     </main>
   </div>
+  </div><!-- /#appScroll -->
 
   <!-- Bottom tab bar: narrow screens only. Above 980px it is display:none and the
        desktop two-column layout is untouched. -->

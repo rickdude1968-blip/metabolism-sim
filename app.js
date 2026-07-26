@@ -176,16 +176,27 @@
     saveWorking();
   }
 
+  // Only fields that actually raise a keyboard count; selects and sliders do not.
+  const KB_TYPES = ['text', 'number', 'time', 'email', 'tel', 'url', 'search', 'password'];
+  const opensKeyboard = el => !!el && (el.tagName === 'TEXTAREA' ||
+    (el.tagName === 'INPUT' && KB_TYPES.indexOf(String(el.type).toLowerCase()) >= 0));
+
+  // Derived from whatever is focused right now rather than from paired
+  // focusin/focusout events. Removing a focused element — or hiding one with
+  // display:none — moves focus to <body> without firing focusout, so a paired
+  // implementation strands the bar hidden with nothing left to restore it.
+  // execCopy() and hideScenText() both do exactly that.
+  function syncKeyboardState() {
+    const bar = $('tabBar');
+    if (bar) bar.classList.toggle('kb-hidden', opensKeyboard(document.activeElement));
+  }
+
   function wireTabs() {
     document.querySelectorAll('#tabBar .tab-btn').forEach(b =>
       b.onclick = () => setTab(b.dataset.tab));
-    // A fixed bottom bar floats over the inputs once the number pad opens. Only
-    // fields that actually raise a keyboard count; selects and sliders do not.
-    const KB_TYPES = ['text', 'number', 'time', 'email', 'tel', 'url', 'search', 'password'];
-    const opensKeyboard = el => !!el && (el.tagName === 'TEXTAREA' ||
-      (el.tagName === 'INPUT' && KB_TYPES.indexOf(String(el.type).toLowerCase()) >= 0));
-    document.addEventListener('focusin', e => { if (opensKeyboard(e.target)) $('tabBar').classList.add('kb-hidden'); });
-    document.addEventListener('focusout', e => { if (opensKeyboard(e.target)) $('tabBar').classList.remove('kb-hidden'); });
+    document.addEventListener('focusin', syncKeyboardState);
+    // During focusout activeElement has not moved yet, so re-read after the task.
+    document.addEventListener('focusout', () => setTimeout(syncKeyboardState, 0));
   }
 
   // ---- now cursor / status ----------------------------------------------
@@ -633,6 +644,7 @@
     let ok = false;
     try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
     ta.remove();
+    syncKeyboardState();   // removal fires no focusout; re-derive rather than strand
     return ok;
   }
   function copyScenarioText() {
@@ -660,8 +672,14 @@
     if (!showLoad) $('scenTextBox').select();
   }
   function hideScenText() {
+    const box = $('scenTextBox');
+    // Hiding a focused field fires no focusout and does not clear activeElement
+    // synchronously, so blur first — otherwise the sync below reads the field
+    // that is already gone and leaves the tab bar hidden.
+    if (box && document.activeElement === box) box.blur();
     $('scenTextWrap').hidden = true;
-    $('scenTextBox').value = '';
+    if (box) box.value = '';
+    syncKeyboardState();
   }
 
   // Parse + validate + apply. Returns the scenario on success, null on failure;

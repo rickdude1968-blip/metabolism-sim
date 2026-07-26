@@ -173,8 +173,28 @@ button.primary:hover, .add-block button:hover { background: var(--accent-d); }
 .tab-bar { display: none; }
 
 @media (max-width: 980px) {
+  /* App shell. The bar used to be position:fixed, which anchors it to the
+     viewport — and iOS can report a stale viewport after presenting a native
+     sheet such as the share sheet, which floated the bar to mid-screen while
+     scrolling. In normal flow as the last child of a flex column it cannot
+     drift, whatever the viewport claims.
+     dvh, not vh: dvh tracks the visual viewport when a sheet or the keyboard
+     shifts it. The vh line above is the fallback for browsers without dvh. */
+  body {
+    height: 100vh;
+    height: 100dvh;
+    display: flex; flex-direction: column;
+    overflow: hidden;          /* scrolling belongs to #appScroll */
+    padding-bottom: 0;         /* the bar takes real space now, so no spacer */
+  }
+  #appScroll {
+    flex: 1 1 auto;
+    min-height: 0;             /* without this a flex child refuses to shrink */
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
   .tab-bar {
-    display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+    display: flex; flex: 0 0 auto; position: static;
     background: var(--panel); border-top: 1px solid var(--border);
     box-shadow: 0 -2px 10px rgba(20,30,50,.07);
     /* Needs viewport-fit=cover in the viewport meta or this resolves to 0. */
@@ -196,9 +216,6 @@ button.primary:hover, .add-block button:hover { background: var(--accent-d); }
     color: var(--accent-d); background: #eef4fb; border-top-color: var(--accent);
   }
   .tab-btn[aria-selected="true"] .tab-lbl { font-weight: 700; }
-
-  /* Keep the end of the page clear of the fixed bar. */
-  body { padding-bottom: calc(66px + env(safe-area-inset-bottom)); }
 
   .tabpanel { display: none; }
   .tabpanel.is-active { display: block; }
