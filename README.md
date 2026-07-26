@@ -514,8 +514,9 @@ faithful reproduction of any single study.
 Copyright (C) 2026 Rick Theiner
 
 This program is free software: you can redistribute it and/or modify it
-under the terms of the GNU General Public License version 3, as published
-by the Free Software Foundation. See [LICENSE](LICENSE) for the full text.
+under the terms of the GNU General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option)
+any later version. See [LICENSE](LICENSE) for the full text.
 
 This program is distributed WITHOUT ANY WARRANTY. It is intended for
 educational and exploratory use and is not medical advice.
