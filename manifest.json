@@ -1,0 +1,24 @@
+{
+  "name": "5-Day Metabolism Simulator",
+  "short_name": "Metabolism",
+  "description": "A time-stepped model of substrate metabolism run continuously over 5 days. Educational model — not medical or nutritional advice.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f6f9",
+  "theme_color": "#2196F3",
+  "icons": [
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

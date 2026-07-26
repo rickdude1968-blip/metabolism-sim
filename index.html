@@ -23,6 +23,20 @@
        non-zero value, which the fixed bottom tab bar depends on. -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>5-Day Metabolism Simulator</title>
+
+  <!-- Installable web app. No service worker on purpose: offline support would
+       pin anyone who installed it to a stale cached build while the model is
+       still changing, so every open fetches the current version. -->
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#2196F3" />
+  <!-- iOS ignores the manifest's icons and uses this one. -->
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+  <!-- iOS also needs its own standalone hint; the status-bar style is left at
+       the default so content stays below the status bar rather than under it. -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Metabolism" />
+
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
