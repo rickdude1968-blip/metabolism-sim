@@ -447,6 +447,28 @@ Notepad++, etc.). Nothing needs to be "compiled."
 
 After any edit, just refresh the browser (no build step).
 
+### Regression test — run this after changing the model
+This repository includes a permanent, committed regression test at
+**`test/roundtrip-test.html`**, next to the app files.
+
+It verifies that **continuing a scenario reproduces an uninterrupted run
+exactly** — all 18 state and trajectory variables, to floating-point tolerance.
+To run it, serve this folder and open the page:
+
+```bash
+python -m http.server 8000
+```
+
+then visit `http://localhost:8000/test/roundtrip-test.html`. It runs on load and
+shows a green (pass) or red (fail) verdict; `window.__results.pass` gives the
+same answer programmatically.
+
+**Why it matters:** if you add any new variable that persists between timesteps
+and forget to include it in the scenario file's `initialState` (or in the
+`carryInEvents` history), chained runs will silently drift away from continuous
+ones — curves that render fine and mean nothing. This test is what catches that.
+It is worth re-running after any change to `simulation.js`.
+
 ---
 
 ## Scientific references
