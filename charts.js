@@ -302,6 +302,14 @@
     Object.values(charts).forEach(c => c && c.draw());
   }
 
+  // Chart.js measures its container on creation. A chart built while its panel is
+  // display:none comes out zero-width and renders blank or as a sliver, so the tab
+  // switch has to re-measure once the panel is actually laid out.
+  function resizeCharts() {
+    Object.values(charts).forEach(c => { if (c) c.resize(); });
+  }
+
   window.renderCharts = renderCharts;
   window.updateNowLine = updateNowLine;
+  window.resizeCharts = resizeCharts;
 })();

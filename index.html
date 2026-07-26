@@ -19,7 +19,9 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- viewport-fit=cover is required for env(safe-area-inset-*) to return a
+       non-zero value, which the fixed bottom tab bar depends on. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>5-Day Metabolism Simulator</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -32,8 +34,14 @@
   </header>
 
   <div class="layout">
+    <!-- Global banners live outside every tab panel so they stay visible whichever
+         tab is active — an export reminder inside an inactive tab is useless. -->
+    <div id="continueBanner" class="continue-banner" style="display:none"></div>
+    <div id="backupNote" class="backup-note" hidden></div>
+
     <!-- ============ LEFT: inputs ============ -->
     <aside class="panel inputs">
+      <div id="tabEvents" class="tabpanel is-active" role="tabpanel" aria-labelledby="tabBtnEvents">
       <section>
         <h2>Profile</h2>
         <div class="grid2">
@@ -135,7 +143,9 @@
           <button id="resetBtn">Reset to example</button>
         </div>
       </section>
+      </div><!-- /#tabEvents -->
 
+      <div id="tabFiles" class="tabpanel" role="tabpanel" aria-labelledby="tabBtnFiles">
       <section>
         <h2>Scenarios</h2>
         <p class="scen-hint">Save the current profile + schedule so you can return to it later.</p>
@@ -144,7 +154,6 @@
           <button id="scenSave" class="primary">Save</button>
         </div>
         <div id="scenList" class="scenario-list"></div>
-        <div id="backupNote" class="backup-note" hidden></div>
         <label class="scen-continue" title="Charts reset to a fresh 5 days; glycogen, amino acids, and body fat start where the saved run ended">
           <input type="checkbox" id="scenContinue" />
           <span><b>Continue</b> — start the next 5 days from the saved end-state
@@ -171,17 +180,17 @@
         </div>
         <div id="scenFileStatus" class="scen-status" role="status" aria-live="polite"></div>
       </section>
+      </div><!-- /#tabFiles -->
     </aside>
 
     <!-- ============ RIGHT: charts + status ============ -->
     <main class="panel results">
+      <div id="tabOutput" class="tabpanel" role="tabpanel" aria-labelledby="tabBtnOutput">
       <div class="now-bar">
         <label>Now: <strong id="nowLabel">D1 00:00</strong></label>
         <input id="nowSlider" type="range" min="0" max="1439" value="0" />
         <button id="playBtn">▶ Play</button>
       </div>
-
-      <div id="continueBanner" class="continue-banner" style="display:none"></div>
 
       <div class="chart-card">
         <h3>1 · Substrate trace <span class="hint">where energy comes from (stacked %) + glycogen stores (dashed, right axis)</span></h3>
@@ -206,8 +215,26 @@
         <h3>5 · Running calorie balance</h3>
         <div class="chart-wrap"><canvas id="chartBalance"></canvas></div>
       </div>
+      </div><!-- /#tabOutput -->
     </main>
   </div>
+
+  <!-- Bottom tab bar: narrow screens only. Above 980px it is display:none and the
+       desktop two-column layout is untouched. -->
+  <nav id="tabBar" class="tab-bar" role="tablist" aria-label="Sections">
+    <button type="button" class="tab-btn" id="tabBtnEvents" role="tab" data-tab="tabEvents"
+            aria-selected="true" aria-controls="tabEvents">
+      <span class="tab-ico" aria-hidden="true">📝</span><span class="tab-lbl">Events</span>
+    </button>
+    <button type="button" class="tab-btn" id="tabBtnOutput" role="tab" data-tab="tabOutput"
+            aria-selected="false" aria-controls="tabOutput">
+      <span class="tab-ico" aria-hidden="true">📈</span><span class="tab-lbl">Output</span>
+    </button>
+    <button type="button" class="tab-btn" id="tabBtnFiles" role="tab" data-tab="tabFiles"
+            aria-selected="false" aria-controls="tabFiles">
+      <span class="tab-ico" aria-hidden="true">💾</span><span class="tab-lbl">Files</span>
+    </button>
+  </nav>
 
   <!-- Chart.js — vendored locally so the app works offline / from file://.
        (Spec suggested the jsDelivr CDN; swap this line back if you prefer it.) -->

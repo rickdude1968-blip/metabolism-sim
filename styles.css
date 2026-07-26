@@ -156,6 +156,62 @@ button.primary:hover, .add-block button:hover { background: var(--accent-d); }
   background: #fff7e6; border: 1px solid #ffe0a3; color: #7a5b00;
   border-radius: 8px; padding: 7px 9px; margin-bottom: 10px; line-height: 1.35; }
 .backup-note button { flex-shrink: 0; padding: 3px 8px; font-size: 11px; }
+/* The display:flex above beats the UA rule for [hidden], so without this the
+   empty note still renders as a thin amber strip. */
+.backup-note[hidden] { display: none; }
+
+/* =========================================================================
+   Bottom tab navigation — narrow screens only
+   ========================================================================= */
+
+/* Banners are direct children of .layout so they sit outside every tab panel.
+   Spanning all columns keeps desktop auto-placement intact: they take row 1 and
+   the sidebar/results panels fall into row 2 as before. */
+#continueBanner, #backupNote { grid-column: 1 / -1; }
+
+/* Above the breakpoint there is no tab bar and every panel is always shown. */
+.tab-bar { display: none; }
+
+@media (max-width: 980px) {
+  .tab-bar {
+    display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+    background: var(--panel); border-top: 1px solid var(--border);
+    box-shadow: 0 -2px 10px rgba(20,30,50,.07);
+    /* Needs viewport-fit=cover in the viewport meta or this resolves to 0. */
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  /* The number pad would otherwise leave a fixed bar floating over the inputs. */
+  .tab-bar.kb-hidden { display: none; }
+
+  .tab-btn {
+    flex: 1; min-height: 52px; padding: 7px 4px; background: none;
+    border: none; border-top: 3px solid transparent; border-radius: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 2px; color: var(--muted); font-size: 16px;
+  }
+  .tab-btn .tab-ico { font-size: 19px; line-height: 1; }
+  .tab-btn .tab-lbl { font-size: 12px; }
+  /* Active state carries weight and a top indicator, not colour alone. */
+  .tab-btn[aria-selected="true"] {
+    color: var(--accent-d); background: #eef4fb; border-top-color: var(--accent);
+  }
+  .tab-btn[aria-selected="true"] .tab-lbl { font-weight: 700; }
+
+  /* Keep the end of the page clear of the fixed bar. */
+  body { padding-bottom: calc(66px + env(safe-area-inset-bottom)); }
+
+  .tabpanel { display: none; }
+  .tabpanel.is-active { display: block; }
+
+  /* The wrappers stop being cards and the active panel becomes one, so a wrapper
+     holding no active panel adds nothing (not even a grid gap). */
+  .inputs, .results { background: none; border: none; box-shadow: none; padding: 0; }
+  .inputs:not(.has-active), .results:not(.has-active) { display: none; }
+  .tabpanel.is-active {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; box-shadow: var(--shadow); padding: 16px;
+  }
+}
 
 /* =========================================================================
    Touch and small-screen data entry

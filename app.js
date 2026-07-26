@@ -147,6 +147,47 @@
     } else { el.style.display = 'none'; }
   }
 
+  // ---- bottom tab navigation (narrow screens only) -----------------------
+  const TABS = ['tabEvents', 'tabOutput', 'tabFiles'];
+  let activeTab = TABS[0];
+  const tabsActive = () => window.matchMedia && window.matchMedia('(max-width: 980px)').matches;
+
+  function setTab(id) {
+    if (TABS.indexOf(id) < 0) id = TABS[0];
+    activeTab = id;
+    // Two panels share the .inputs wrapper, so decide each wrapper once rather
+    // than toggling per panel — otherwise the inactive sibling clears the flag.
+    const wrappers = [];
+    TABS.forEach(t => {
+      const panel = $(t);
+      if (!panel) return;
+      panel.classList.toggle('is-active', t === id);
+      const btn = $('tabBtn' + t.slice(3));
+      if (btn) btn.setAttribute('aria-selected', t === id ? 'true' : 'false');
+      if (panel.parentElement && wrappers.indexOf(panel.parentElement) < 0) wrappers.push(panel.parentElement);
+    });
+    const activePanel = $(id);
+    wrappers.forEach(w => w.classList.toggle('has-active', !!activePanel && w === activePanel.parentElement));
+    // Re-measure only once the panel is laid out, or the charts stay zero-width.
+    if (id === 'tabOutput' && window.resizeCharts) {
+      window.resizeCharts();
+      if (simData) window.updateNowLine(+$('nowSlider').value);
+    }
+    saveWorking();
+  }
+
+  function wireTabs() {
+    document.querySelectorAll('#tabBar .tab-btn').forEach(b =>
+      b.onclick = () => setTab(b.dataset.tab));
+    // A fixed bottom bar floats over the inputs once the number pad opens. Only
+    // fields that actually raise a keyboard count; selects and sliders do not.
+    const KB_TYPES = ['text', 'number', 'time', 'email', 'tel', 'url', 'search', 'password'];
+    const opensKeyboard = el => !!el && (el.tagName === 'TEXTAREA' ||
+      (el.tagName === 'INPUT' && KB_TYPES.indexOf(String(el.type).toLowerCase()) >= 0));
+    document.addEventListener('focusin', e => { if (opensKeyboard(e.target)) $('tabBar').classList.add('kb-hidden'); });
+    document.addEventListener('focusout', e => { if (opensKeyboard(e.target)) $('tabBar').classList.remove('kb-hidden'); });
+  }
+
   // ---- now cursor / status ----------------------------------------------
   function setNow(idx) {
     idx = Math.max(0, Math.min(STEPS - 1, idx));
@@ -417,7 +458,7 @@
       profile: readProfile(), settings: {},
       schedule: JSON.parse(JSON.stringify(schedule)),
       initialState: carryOverState, carryInEvents: carryOverCarryIn,
-      draft: readDraft()
+      draft: readDraft(), activeTab: activeTab
     };
   }
   function writeWorking() {
@@ -449,6 +490,9 @@
     carryOverState = scn.initialState; carryOverCarryIn = scn.carryInEvents;
     if (scn.name) $('scenName').value = scn.name;
     applyDraft(raw.draft);
+    // parseScenario normalises away anything it does not know about, so the tab
+    // comes off the raw object — and only if it names a tab this build has.
+    if (TABS.indexOf(raw.activeTab) >= 0) setTab(raw.activeTab);
     return true;
   }
 
@@ -748,6 +792,8 @@
   function init() {
     $('nowSlider').max = STEPS - 1;   // span the full multi-day window
     fillDaySelects();                 // day selects must exist before a draft is restored
+    wireTabs();
+    setTab(activeTab);                // establish is-active / has-active before first paint
     const restored = restoreWorking();
 
     ['pWeight', 'pHeight', 'pAge', 'pSex', 'pTraining'].forEach(id =>
@@ -755,7 +801,10 @@
     DRAFT_FIELDS.forEach(id => { if ($(id)) $(id).addEventListener('input', saveWorking); });
     $('scenName').addEventListener('input', saveWorking);
     $('nowSlider').addEventListener('input', e => setNow(+e.target.value));
-    $('runBtn').onclick = run;
+    // Running and seeing nothing change is confusing on a phone, so an explicit Run
+    // jumps to Output. Only this handler switches — the run() calls behind init,
+    // reset, restore and import leave the current tab alone.
+    $('runBtn').onclick = () => { run(); if (tabsActive()) setTab('tabOutput'); };
     $('playBtn').onclick = togglePlay;
     $('resetBtn').onclick = () => {
       schedule = JSON.parse(JSON.stringify(window.DEFAULT_SCHEDULE));

@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<!--
+  Metabolic Simulator
+  Copyright (C) 2026 Rick Theiner
+
+  This program is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Regression test — scenario chaining fidelity</title>
+<style>
+  body { font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         margin: 0; padding: 24px; background: #f4f6f9; color: #1f2733; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 24px 0 8px; border-bottom: 1px solid #e2e6ec; padding-bottom: 5px; }
+  .sub { color: #7a8594; font-size: 13px; margin: 0 0 18px; }
+  table { border-collapse: collapse; width: 100%; max-width: 1000px; background: #fff;
+          box-shadow: 0 1px 3px rgba(20,30,50,.08); border-radius: 8px; overflow: hidden; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #eef1f5; font-size: 13px; }
+  th { background: #f7f9fc; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #7a8594; }
+  td.num { font-variant-numeric: tabular-nums; text-align: right; }
+  .pass { color: #2E7D32; font-weight: 600; }
+  .fail { color: #C62828; font-weight: 600; }
+  .info { color: #7a8594; }
+  .verdict { margin: 18px 0; padding: 12px 14px; border-radius: 8px; font-weight: 600; }
+  .verdict.ok { background: #eef6ee; border: 1px solid #bcd9bc; color: #2c5e2c; }
+  .verdict.bad { background: #fdecec; border: 1px solid #f5c2c2; color: #a12a2a; }
+  code { background: #eef1f5; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>Regression test — scenario chaining fidelity</h1>
+<p class="sub">
+  <b>What it guards:</b> that continuing a scenario from a saved end-state reproduces an
+  uninterrupted run <i>exactly</i>, variable by variable. If a change to the model ever adds
+  state that the scenario file does not carry, this test goes red.<br />
+  <b>How to run:</b> serve the app folder
+  (<code>python -m http.server</code> from <code>metabolism-sim/</code>) and open
+  <code>/test/roundtrip-test.html</code>. It runs on load; the banner below is the verdict.
+  A <code>file://</code> open also works in some browsers. Programmatic result:
+  <code>window.__results.pass</code>.
+</p>
+<div id="out">running…</div>
+
+<script src="../simulation.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  const TOL = 1e-9;                       // floating-point tolerance
+  const STEPS_PER_DAY = window.SIM_STEPS_PER_DAY || 288;
+
+  const PROFILE = { weight: 95, height: 182.5, age: 57, sex: 'male', training: 'recreational' };
+
+  // Schedule deliberately built so that state-bearing processes STRADDLE the
+  // Day1→Day2 seam: sleep crosses midnight, a late Day-1 meal's absorption tail
+  // runs past midnight, alcohol is still clearing, and a Day-1 resistance
+  // session's MPS window extends ~36 h into Day 2.
+  const BASE = [
+    // ---- Day 1 ----
+    { day: 1, type: 'sleep', start: '22:30', end: '06:30' },
+    { day: 1, type: 'meal', time: '07:00', name: 'Breakfast', kcal: 560, carbs: 68, protein: 28, fat: 18, alcohol: 0 },
+    { day: 1, type: 'resistance', start: '17:30', duration: 45, intensity: 'moderate' },
+    { day: 1, type: 'meal', time: '19:15', name: 'Dinner', kcal: 900, carbs: 100, protein: 45, fat: 30, alcohol: 22.5 },
+    { day: 1, type: 'meal', time: '21:45', name: 'Late snack', kcal: 300, carbs: 35, protein: 10, fat: 12, alcohol: 15 },
+    // ---- Day 2 ----
+    { day: 2, type: 'sleep', start: '22:30', end: '06:30' },
+    { day: 2, type: 'meal', time: '07:15', name: 'Breakfast', kcal: 520, carbs: 60, protein: 30, fat: 16, alcohol: 0 },
+    { day: 2, type: 'aerobic', start: '12:00', duration: 45, intensity: 'moderate' },
+    { day: 2, type: 'meal', time: '13:15', name: 'Lunch', kcal: 700, carbs: 80, protein: 40, fat: 22, alcohol: 0 },
+    { day: 2, type: 'meal', time: '19:00', name: 'Dinner', kcal: 850, carbs: 95, protein: 48, fat: 28, alcohol: 0 },
+    // ---- Day 3 (keeps both runs' horizons populated past the compared window) ----
+    { day: 3, type: 'sleep', start: '22:30', end: '06:30' },
+    { day: 3, type: 'meal', time: '07:15', name: 'Breakfast', kcal: 520, carbs: 60, protein: 30, fat: 16, alcohol: 0 },
+    { day: 3, type: 'meal', time: '13:15', name: 'Lunch', kcal: 700, carbs: 80, protein: 40, fat: 22, alcohol: 0 }
+  ];
+
+  // Shift every event's day by `delta`; events falling before Day 1 drop out
+  // (the continued run legitimately has no knowledge of the previous day's events).
+  function shiftDays(sched, delta) {
+    return sched
+      .map(e => Object.assign({}, e, { day: (+e.day || 1) + delta }))
+      .filter(e => e.day >= 1);
+  }
+
+  // The six physiological state variables the export carries (Tier A).
+  const PHYS = [
+    ['liverGlycogen', 'liver'], ['muscleGlycogen', 'muscle'], ['aminoPool', 'aminoPool'],
+    ['insulin', 'insulin'], ['alcoholInSystem', 'alcoholInSystem'], ['fatStored_g', 'fatStored_g']
+  ];
+  // Derived / time-since-X quantities that are NOT exported but do steer the model (Tier C).
+  const DERIVED = ['hoursFasted', 'mpsRate', 'gngRate', 'demandKcal', 'fatFracAdjusted'];
+  // Per-step substrate supply (the trajectory itself).
+  const KCAL = ['gutGlucose', 'liver', 'muscle', 'gng', 'gutFat', 'adipose', 'alcohol'];
+  // Display accumulators — reset by design on a new run; reported, not graded.
+  const ACCUM = ['cumConsumed', 'cumExpended', 'cumSurplusGlucose', 'daySurplusGlucose'];
+
+  // ---- Run A: one continuous run -------------------------------------------
+  const runA = window.runSimulation(PROFILE, BASE);
+
+  // ---- "Export" at the end of Day 1, exactly as the app would --------------
+  // The app writes endState = {liver, muscle, aminoPool, insulin, alcoholInSystem,
+  // fatStored_g}; here we take that same six-field vector from the last step of Day 1.
+  const BOUNDARY_MIN = STEPS_PER_DAY * 5;            // end of Day 1, in minutes
+  const boundary = runA[STEPS_PER_DAY - 1];
+  const exportObj = {
+    schemaVersion: 1,
+    app: 'metabolism-simulator',
+    name: 'roundtrip',
+    created: new Date().toISOString(),
+    profile: PROFILE,
+    schedule: shiftDays(BASE, -1),
+    initialState: {
+      liver: boundary.liverGlycogen,
+      muscle: boundary.muscleGlycogen,
+      aminoPool: boundary.aminoPool,
+      insulin: boundary.insulin,
+      alcoholInSystem: boundary.alcoholInSystem,
+      fatStored_g: boundary.fatStored_g
+    },
+    // Real trailing events, so the continued run reproduces the history that
+    // the six state scalars alone cannot express (gut contents, MPS, EPOC…).
+    carryInEvents: window.buildCarryIn(runA.timeline, BOUNDARY_MIN)
+  };
+  // Real file round-trip: through JSON and back, so any serialization loss shows up.
+  const imported = JSON.parse(JSON.stringify(exportObj));
+
+  // ---- Run B: fresh run seeded from the imported end-state ------------------
+  const runB = window.runSimulation(imported.profile, imported.schedule,
+                                    imported.initialState, imported.carryInEvents);
+
+  // ---- Compare Run A's Day 2 against Run B's Day 1 -------------------------
+  function compare(label, tier, getter) {
+    let maxAbs = 0, atStep = -1;
+    for (let i = 0; i < STEPS_PER_DAY; i++) {
+      const a = getter(runA[STEPS_PER_DAY + i]);
+      const b = getter(runB[i]);
+      const d = Math.abs(a - b);
+      if (d > maxAbs) { maxAbs = d; atStep = i; }
+    }
+    const endA = getter(runA[STEPS_PER_DAY * 2 - 1]);
+    const endB = getter(runB[STEPS_PER_DAY - 1]);
+    return { variable: label, tier, maxAbsDiff: maxAbs, atStep,
+             atTime: atStep >= 0 ? runB[atStep].todLabel : '—',
+             endA, endB, endDiff: Math.abs(endA - endB),
+             pass: maxAbs <= TOL };
+  }
+
+  const results = [];
+  PHYS.forEach(([field]) => results.push(compare(field, 'A · physiological (exported)', d => d[field])));
+  DERIVED.forEach(f => results.push(compare(f, 'C · derived / time-since-X (not exported)', d => d[f])));
+  KCAL.forEach(f => results.push(compare('kcal.' + f, 'trajectory', d => d.kcal[f])));
+  ACCUM.forEach(f => results.push(compare(f, 'B · accumulator (resets by design)', d => d[f])));
+
+  const graded = results.filter(r => !r.tier.startsWith('B ·'));
+  const failures = graded.filter(r => !r.pass);
+
+  // ---- Render ---------------------------------------------------------------
+  const fmt = v => (Math.abs(v) >= 1e-4 || v === 0) ? v.toFixed(6) : v.toExponential(3);
+  let html = '';
+
+  html += `<div class="verdict ${failures.length ? 'bad' : 'ok'}">` +
+    (failures.length
+      ? `✗ ${failures.length} of ${graded.length} graded variables diverge beyond tolerance (${TOL}). Chaining is NOT yet numerically equivalent to a continuous run.`
+      : `✓ All ${graded.length} graded variables match to within ${TOL}. Chaining is numerically equivalent to a continuous run.`) +
+    '</div>';
+
+  html += '<h2>Comparison — Run A Day 2 vs. Run B Day 1 (288 steps)</h2>';
+  html += '<table><tr><th>Variable</th><th>Tier</th><th>Max abs diff</th><th>Worst at</th>' +
+          '<th>End A</th><th>End B</th><th>Result</th></tr>';
+  for (const r of results) {
+    const graded_ = !r.tier.startsWith('B ·');
+    const cls = !graded_ ? 'info' : (r.pass ? 'pass' : 'fail');
+    const verdict = !graded_ ? 'n/a (by design)' : (r.pass ? 'PASS' : 'DIVERGES');
+    html += `<tr><td><code>${r.variable}</code></td><td class="info">${r.tier}</td>` +
+            `<td class="num">${fmt(r.maxAbsDiff)}</td><td class="num info">${r.atTime}</td>` +
+            `<td class="num">${fmt(r.endA)}</td><td class="num">${fmt(r.endB)}</td>` +
+            `<td class="${cls}">${verdict}</td></tr>`;
+  }
+  html += '</table>';
+
+  html += '<h2>Seeding check — did the export land where expected?</h2>';
+  html += '<table><tr><th>Variable</th><th>Exported at Day 1 end</th><th>Run B step 0 value</th></tr>';
+  for (const [field, key] of PHYS) {
+    html += `<tr><td><code>${key}</code></td><td class="num">${fmt(exportObj.initialState[key])}</td>` +
+            `<td class="num">${fmt(runB[0][field])}</td></tr>`;
+  }
+  html += '</table>';
+
+  document.getElementById('out').innerHTML = html;
+
+  window.__results = {
+    pass: failures.length === 0,
+    tolerance: TOL,
+    gradedCount: graded.length,
+    failures: failures.map(r => ({ variable: r.variable, tier: r.tier,
+      maxAbsDiff: r.maxAbsDiff, worstAt: r.atTime, endA: r.endA, endB: r.endB })),
+    all: results,
+    exportedInitialState: exportObj.initialState,
+    carryInEventCount: exportObj.carryInEvents.length,
+    carryInEvents: exportObj.carryInEvents,
+    runB_step0: { liver: runB[0].liverGlycogen, muscle: runB[0].muscleGlycogen,
+                  aminoPool: runB[0].aminoPool, insulin: runB[0].insulin,
+                  alcoholInSystem: runB[0].alcoholInSystem, fatStored_g: runB[0].fatStored_g }
+  };
+  console.log('Round-trip results', window.__results);
+})();
+</script>
+</body>
+</html>
