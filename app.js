@@ -237,7 +237,9 @@
     html += cell('Glucose surplus (today)', `${d.daySurplusGlucose.toFixed(0)} g${d.daySurplusGlucose > 150 ? ' · lipogenesis likely' : ''}`);
     const dlt = d.fatDelta;
     html += cell('Body-fat store', `${(d.fatStored_g / 1000).toFixed(2)} kg · Δ ${dlt >= 0 ? '+' : '−'}${Math.abs(dlt).toFixed(0)} g this run`);
-    if (d.alcoholInSystem > 0.01) html += cell('Alcohol in system', d.alcoholInSystem.toFixed(1) + ' g');
+    // Gated on the very same flag that drove the suppression, so the number,
+    // the flag and the metabolic effect can never disagree.
+    if (d.alcoholActive) html += cell('Alcohol in system', d.alcoholDuringStep.toFixed(2) + ' g');
     html += '</div>';
 
     if (d.flags.length) {

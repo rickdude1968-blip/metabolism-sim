@@ -40,6 +40,11 @@
   const KCAL_CARB = 4;
   const KCAL_FAT = 9;
   const KCAL_ALCOHOL = 7;
+  // Below this the pool is a pharmacologically meaningless trace: it is still
+  // oxidized (so the tail of an absorption curve can never strand), but it does
+  // not suppress fat oxidation and is not reported. Flag, on-screen readout and
+  // the metabolic effect all use this one threshold, so they can never disagree.
+  const ALCOHOL_REPORT_MIN = 0.05;   // grams
 
   // ---- utility ------------------------------------------------------------
   function hhmmToMin(s) {
@@ -397,14 +402,26 @@
       let fatFrac = act.fatFrac * insulinSuppressor;
 
       // ---- 3E. alcohol override --------------------------------------
-      const alcoholPresent = alcoholInSystem > 0.001;
-      if (alcoholPresent) fatFrac *= 0.25;         // NADH suppresses beta-oxidation
+      // The pool at the START of the step is what governs this step's
+      // metabolism, so the flag, the on-screen number and the fat suppression
+      // are all derived from it (previously the flag used the pre-burn pool
+      // while the display used the post-burn one, so they disagreed for a few
+      // steps at the end of every drinking episode).
+      const alcoholAtStepStart = alcoholInSystem;
+      const alcoholActive = alcoholAtStepStart >= ALCOHOL_REPORT_MIN;
+      if (alcoholActive) fatFrac *= 0.25;          // NADH suppresses beta-oxidation
       fatFrac = Math.max(0, Math.min(1, fatFrac));
       let carbFrac = 1 - fatFrac;
+      // Hard ceiling on fat oxidation while ethanol is on board; later stages
+      // must not raise fat use back above it.
+      const alcoholFatCeiling = alcoholActive ? fatFrac : 1;
 
       // obligatory ethanol oxidation first (displaces other fuels)
       let ethanolKcal = 0;
-      if (alcoholPresent) {
+      // No lower gate: whatever ethanol is present gets oxidized, so the thin
+      // tail of an absorption curve arriving after the pool empties cannot be
+      // left stranded in the body forever.
+      if (alcoholInSystem > 0) {
         const burn = Math.min(ETHANOL_RATE_G, alcoholInSystem);
         alcoholInSystem -= burn;
         ethanolKcal = Math.min(burn * KCAL_ALCOHOL, demandKcal);
@@ -425,6 +442,10 @@
         const obligateGlucoseKcal = 0.13 * (1 - ketoSparing) * KCAL_CARB * TIMESTEP;
         carbFrac = Math.min(1, obligateGlucoseKcal / remainingDemand);
         fatFrac = 1 - carbFrac;
+        // Alcohol still blocks beta-oxidation. Without this clamp the branch
+        // would overwrite the ethanol override and hand fat oxidation back,
+        // exactly during the fasted/overnight hours when drinking suppresses it.
+        if (fatFrac > alcoholFatCeiling) { fatFrac = alcoholFatCeiling; carbFrac = 1 - fatFrac; }
       }
 
       // ---- fat energy (computed first — the glycerol GNG stream needs it) ---
@@ -604,7 +625,7 @@
       if (insulin > 2 && muscle < C.MUSCLE_GLYCOGEN_MAX && (gutGlucoseAvail - gutGlucose) > 1)
         flags.push('Muscle glycogen replenishment window — carbs now preferentially refill muscle stores');
       if (resistWindow && governingLeucine) flags.push('Protein timing is well-matched to resistance exercise');
-      if (alcoholPresent) flags.push('Alcohol present — fat oxidation significantly suppressed');
+      if (alcoholActive) flags.push('Alcohol present — fat oxidation significantly suppressed');
       if (liver / C.LIVER_GLYCOGEN_MAX < 0.2) flags.push('Liver glycogen low — approaching fasted metabolic state');
       if (mpsStatus.startsWith('Suboptimal')) flags.push('Leucine threshold may not be met — consider 20–40 g protein within 2 h of resistance training');
       if (daySurplusGlucose > 150) flags.push('Large glucose surplus today — de novo lipogenesis likely');
@@ -630,7 +651,13 @@
         mpsRate, mpsStatus,
         gngRate, gngKcal, gngRefill, hoursFasted,
         gngPrecursors: { lactate: lactateGng, alanine: alanineGng, glycerol: glycerolGng },
-        alcoholInSystem, fatStored_g, fatDelta: fatStored_g - fatStartReserve,
+        // `alcoholInSystem` is the true END-of-step state, consistent with every
+        // other state variable here — scenario chaining seeds from these, so it
+        // must not be the pre-burn value. The display fields are separate.
+        alcoholInSystem,
+        alcoholDuringStep: alcoholAtStepStart,   // what was on board during the step
+        alcoholActive,                           // drove suppression + flag this step
+        fatStored_g, fatDelta: fatStored_g - fatStartReserve,
         cumSurplusGlucose, daySurplusGlucose,
         cumConsumed, cumExpended,
         phase, dominantFuel,
@@ -687,6 +714,7 @@
   window.DEFAULT_SCHEDULE = DEFAULT_SCHEDULE;
   window.MET_INFO = { AEROBIC_MET, RESIST_MET };
   window.simUtil = { hhmmToMin, minToLabel, stampLabel };
+  window.ALCOHOL_REPORT_MIN = ALCOHOL_REPORT_MIN;
   window.SIM_DAYS = DAYS;
   window.SIM_STEPS = STEPS;
   window.SIM_STEPS_PER_DAY = STEPS_PER_DAY;
