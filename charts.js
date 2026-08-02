@@ -245,8 +245,101 @@
       plugins: [bandsPlugin, balanceFillPlugin]
     });
 
+    // ---------- Chart 6: Blood alcohol (BAC) -----------------------------
+    // Only built when the day actually contains alcohol — an all-zero chart
+    // would just be noise on a dry week.
+    const bacPeak = Math.max.apply(null, currentData.map(d => d.bac || 0));
+    const bacCard = document.getElementById('bacCard');
+    if (bacCard) bacCard.style.display = bacPeak > 0 ? '' : 'none';
+    if (bacPeak > 0 && document.getElementById('chartBac')) {
+      charts.bac = new Chart(document.getElementById('chartBac'), {
+        type: 'line',
+        data: {
+          labels: labels(),
+          datasets: [{
+            label: 'BAC (g/dL)', data: currentData.map(d => d.bac),
+            borderColor: COLORS.alcohol, backgroundColor: hexA(COLORS.alcohol, 0.22),
+            fill: true, pointRadius: 0, borderWidth: 2, tension: 0.25
+          }]
+        },
+        options: baseOpts({
+          plugins: {
+            legend: { display: false },
+            tooltip: { callbacks: {
+              label: it => 'BAC ' + (+it.raw).toFixed(3) + ' g/dL',
+              afterBody: items => {
+                const d = currentData[items[0].dataIndex];
+                if (!d.bac) return '';
+                const hm = m => Math.floor(m / 60) + ' hr ' + Math.round(m % 60) + ' min';
+                const out = ['Clears in ~' + hm(d.bacToZeroMin)];
+                if (d.bacToLegalMin > 0) out.push('Under 0.08 in ~' + hm(d.bacToLegalMin));
+                return out;
+              } } }
+          },
+          scales: {
+            x: baseOpts().scales.x,
+            y: { min: 0, suggestedMax: bacPeak * 1.2, title: { display: true, text: 'BAC g/dL' },
+                 ticks: { font: { size: 10 }, callback: v => (+v).toFixed(2) } }
+          }
+        }),
+        plugins: [bandsPlugin, bacThresholdPlugin]
+      });
+    }
+
     updateNowLine(nowIndex);
   }
+
+  // Reference thresholds + the shaded "over the US limit" zone, drawn behind
+  // the trace so the curve stays readable on top of them.
+  const bacThresholdPlugin = {
+    id: 'bacThresholds',
+    beforeDatasetsDraw(chart) {
+      const { ctx, chartArea: a, scales: { y } } = chart;
+      if (!a) return;
+      const legal = window.BAC_LEGAL_US || 0.08;
+      const list = window.BAC_THRESHOLDS || [];
+      ctx.save();
+      // legally-impaired zone: everything above 0.08 that is on screen
+      if (y.max > legal) {
+        const yTop = a.top, yLegal = y.getPixelForValue(legal);
+        ctx.fillStyle = 'rgba(229,57,53,0.07)';
+        ctx.fillRect(a.left, yTop, a.right - a.left, Math.max(0, yLegal - yTop));
+      }
+      ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
+      ctx.font = '9px system-ui'; ctx.textBaseline = 'bottom';
+      for (const t of list) {
+        if (t.bac > y.max) continue;                    // off the top of the axis
+        const yp = y.getPixelForValue(t.bac);
+        if (yp < a.top || yp > a.bottom) continue;
+        ctx.strokeStyle = t.color;
+        ctx.beginPath(); ctx.moveTo(a.left, yp); ctx.lineTo(a.right, yp); ctx.stroke();
+        const txt = t.bac.toFixed(2);
+        ctx.fillStyle = t.color; ctx.textAlign = 'right';
+        ctx.fillText(txt, a.right - 3, yp - 1);
+      }
+      ctx.setLineDash([]);
+      ctx.restore();
+    },
+    // Small marker on the axis for every drink, so peaks can be traced back to
+    // the entry that caused them.
+    afterDatasetsDraw(chart) {
+      const { ctx, chartArea: a, scales: { x } } = chart;
+      if (!a || !currentData || !currentData.timeline) return;
+      const total = currentData.timeline.totalMin || (STEPS * 5);
+      ctx.save();
+      ctx.fillStyle = COLORS.alcohol;
+      for (const m of currentData.timeline.meals) {
+        if (!m.alcohol || m.min < 0 || m.min > total) continue;
+        const xp = x.getPixelForValue(Math.max(0, Math.min(STEPS - 1, Math.round(m.min / 5))));
+        ctx.beginPath();
+        ctx.moveTo(xp, a.bottom);
+        ctx.lineTo(xp - 4, a.bottom + 6);
+        ctx.lineTo(xp + 4, a.bottom + 6);
+        ctx.closePath(); ctx.fill();
+      }
+      ctx.restore();
+    }
+  };
 
   function stackArea(label, data, color) {
     return { label, data, backgroundColor: hexA(color, 0.75), borderColor: color, borderWidth: 0, fill: true, pointRadius: 0, tension: 0.2, stack: 's', yAxisID: 'y' };

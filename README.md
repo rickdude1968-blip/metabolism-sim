@@ -292,6 +292,7 @@ produces exactly the same result.
 | 3 | **Glycogen stores** | Liver and muscle glycogen in grams, with dashed reference lines at 50% and 20% of liver capacity. |
 | 4 | **MPS activity** | Muscle-protein-synthesis rate over the 5 days. |
 | 5 | **Calorie balance** | Cumulative calories eaten vs. burned across the whole 5 days, shaded green (surplus) or red (deficit) — this is where a small daily deficit or surplus visibly compounds. |
+| 6 | **Blood alcohol (BAC)** | Estimated BAC in g/dL, with dashed reference thresholds (0.02 … 0.40), a tinted band above the US 0.08 limit, and a marker on the axis for each drink. **Only appears when the schedule contains alcohol.** |
 
 Every chart spans all 5 days left-to-right. The horizontal axis is labelled
 **"Day 1"…"Day 5"** at each midnight (with a 12:00 tick mid-day), and faint
@@ -318,6 +319,39 @@ the circumstances rather than only climbing. The "Δ … this run" shows the net
 change since the start of the current 5-day window; the absolute reserve carries
 over if you use **Continue**.
 
+
+### Blood alcohol (BAC)
+When any meal carries alcohol, a sixth chart appears estimating **blood alcohol
+concentration** from the circulating ethanol the model is already tracking, via
+the Widmark relation:
+
+```
+BAC (g/dL) = grams of circulating ethanol / (body weight kg x 10 x r)
+```
+
+`r` is the distribution factor — the fraction of body mass that behaves as
+alcohol-diluting water. It is **0.68 for men, 0.55 for women**, nudged by
+training status (sedentary x0.97, recreational x1.00, trained x1.03,
+athlete x1.05) since leaner bodies hold more water per kilogram. So the same
+drink produces a markedly higher BAC in a lighter or less lean person.
+
+The **status panel** adds, whenever BAC is above zero: the current value, a
+plain-language impairment label, when the alcohol fully clears, and — if you are
+over 0.08 — when you would drop back below it. Both are given as an interval and
+the clock time it lands on.
+
+**Alcohol with food peaks lower and later.** A drink taken within 30 minutes of
+real food (>=10 g of carbs/protein/fat, in the same entry or a neighbouring one)
+absorbs on a slower curve, reflecting delayed gastric emptying and gastric
+alcohol dehydrogenase. In the built-in check, 70 g on an empty stomach peaks at
+**0.106 g/dL at 21:40**; the same 70 g alongside a large dinner peaks at
+**0.085 g/dL at 23:00**.
+
+> **These are estimates, not a breathalyser.** Real BAC varies by roughly
+> ±15–20% between individuals, and the model knows nothing about your tolerance,
+> medications, or health. It is an educational illustration of how alcohol
+> clears — **never** a basis for deciding whether to drive. When in doubt,
+> do not drive.
 
 ---
 

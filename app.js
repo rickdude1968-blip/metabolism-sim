@@ -240,6 +240,14 @@
     // Gated on the very same flag that drove the suppression, so the number,
     // the flag and the metabolic effect can never disagree.
     if (d.alcoholActive) html += cell('Alcohol in system', d.alcoholDuringStep.toFixed(2) + ' g');
+    if (d.bac > 0) {
+      const over = d.bac >= (window.BAC_LEGAL_US || 0.08);
+      html += `<div class="scell${over ? ' bac-over' : ''}"><span>Blood alcohol (est.)</span>` +
+              `<b>${d.bac.toFixed(3)} g/dL</b></div>`;
+      html += cell('Impairment', bacLabel(d.bac));
+      html += cell('Clears at', clockIn(d, d.bacToZeroMin));
+      if (d.bacToLegalMin > 0) html += cell('Under 0.08 at', clockIn(d, d.bacToLegalMin));
+    }
     html += '</div>';
 
     if (d.flags.length) {
@@ -251,6 +259,25 @@
     $('statusPanel').innerHTML = html;
   }
   function cell(k, v) { return `<div class="scell"><span>${k}</span><b>${v}</b></div>`; }
+
+  // ---- BAC wording ------------------------------------------------------
+  function bacLabel(b) {
+    if (b <= 0)    return 'No alcohol detected';
+    if (b < 0.02)  return 'Trace — below perceptible effects for most people';
+    if (b < 0.05)  return 'Mild — subtle relaxation, minimal impairment';
+    if (b < 0.08)  return 'Moderate — judgment and reaction time affected; do not drive in many jurisdictions';
+    if (b < 0.10)  return 'Impaired — at or above US legal driving limit';
+    if (b < 0.15)  return 'Clearly impaired — do not drive';
+    if (b < 0.20)  return 'Significantly impaired — coordination substantially reduced';
+    return 'Severely impaired — medical risk';
+  }
+  // "1 hr 25 min (≈ D2 03:15)" — both the interval and the clock time it lands on.
+  function clockIn(d, mins) {
+    const total = Math.round(mins);                 // whole minutes, or the
+    const h = Math.floor(total / 60), m = total % 60;   // clock label goes fractional
+    const span = (h ? h + ' hr ' : '') + m + ' min';
+    return span + ' (≈ ' + window.simUtil.stampLabel(d.minute + total) + ')';
+  }
   function fuelKey(name) {
     return { 'Gut glucose': 'gutGlucose', 'Liver glycogen': 'liver', 'Muscle glycogen': 'muscle',
              'Adipose fat': 'adipose', 'Dietary fat': 'gutFat', 'Gluconeogenesis': 'gng',

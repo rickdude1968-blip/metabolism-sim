@@ -45,6 +45,19 @@
   // not suppress fat oxidation and is not reported. Flag, on-screen readout and
   // the metabolic effect all use this one threshold, so they can never disagree.
   const ALCOHOL_REPORT_MIN = 0.05;   // grams
+  const ALCOHOL_CLEARANCE_G_PER_MIN = 0.1;   // zero-order hepatic clearance
+  // BAC reference thresholds (g/dL) used by the chart and the status wording.
+  const BAC_LEGAL_US = 0.08;
+  const BAC_THRESHOLDS = [
+    { bac: 0.02, label: 'Mild relaxation; subtle effects begin', color: '#9E9E9E' },
+    { bac: 0.05, label: 'Reduced inhibition — EU/AU driving limit', color: '#C0A030' },
+    { bac: 0.08, label: 'US driving limit — measurable impairment', color: '#FFA000' },
+    { bac: 0.10, label: 'Clear impairment of motor control', color: '#FB8C00' },
+    { bac: 0.15, label: 'Significant impairment; nausea likely', color: '#F4511E' },
+    { bac: 0.20, label: 'Serious impairment — medical attention may be warranted', color: '#E53935' },
+    { bac: 0.30, label: 'Danger zone — loss of consciousness possible', color: '#C62828' },
+    { bac: 0.40, label: 'Potentially lethal', color: '#8E1616' }
+  ];
 
   // ---- utility ------------------------------------------------------------
   function hhmmToMin(s) {
@@ -97,6 +110,12 @@
     bfPct = Math.max(6, Math.min(55, bfPct));           // keep in a sane range
     const bodyFat_g = w * (bfPct / 100) * 1000;
 
+    // Widmark distribution factor: the fraction of body mass that behaves as
+    // alcohol-distributing body water. Leaner bodies hold more water per kg, so
+    // training status nudges it up and a higher fat mass nudges it down.
+    const rBase = p.sex === 'female' ? 0.55 : 0.68;
+    const rTraining = { sedentary: 0.97, recreational: 1.00, trained: 1.03, athlete: 1.05 }[p.training] || 1;
+
     return {
       BMR: bmr,
       BMR_PER_MIN: bmr / 1440,
@@ -104,7 +123,12 @@
       MUSCLE_GLYCOGEN_MAX: Math.max(150, muscleMax),
       FAT_OXIDATION_CAPACITY: fatOxCap,
       BODY_FAT_G: bodyFat_g,
-      BODY_FAT_PCT: bfPct
+      BODY_FAT_PCT: bfPct,
+      WIDMARK_R: rBase * rTraining,
+      // Grams of circulating ethanol per 1 g/dL of BAC. Widmark gives
+      // g/mL = grams / (kg * 1000 * r); BAC is quoted in g/dL, i.e. x100,
+      // so the divisor becomes kg * 10 * r.
+      ALCOHOL_G_PER_BAC: w * 10 * (rBase * rTraining)
     };
   }
 
@@ -193,6 +217,17 @@
     }
 
     meals.sort((a, b) => a.min - b.min);
+
+    // Alcohol taken with food leaves the stomach more slowly and meets gastric
+    // alcohol dehydrogenase on the way, so it peaks later and lower. Flag any
+    // alcohol-bearing meal that has real food in it, or beside it within 30 min.
+    const FOOD_MACROS_MIN = 10;              // grams of non-alcohol macros
+    for (const m of meals) {
+      if (!m.alcohol) continue;
+      m.withFood = meals.some(o => Math.abs(o.min - m.min) <= 30 &&
+                                   (o.carbs + o.protein + o.fat) >= FOOD_MACROS_MIN);
+    }
+
     const totalMin = MINS_PER_DAY * DAYS;
 
     // Per-session leucine adequacy: a >=20 g protein meal within +/-2 h of the
@@ -351,7 +386,7 @@
     const INSULIN_GAIN = 10.2;
     const LIVER_OUTPUT_MAX = 1.5 * TIMESTEP;   // 7.5 g / step
     const MUSCLE_REFILL_MAX = 0.5 * TIMESTEP;  // 2.5 g / step
-    const ETHANOL_RATE_G = 0.1 * TIMESTEP;     // 0.5 g / step (zero-order)
+    const ETHANOL_RATE_G = ALCOHOL_CLEARANCE_G_PER_MIN * TIMESTEP;   // 0.5 g / step (zero-order)
 
     // last meal minute lookup (for phase logic)
     const out = [];
@@ -371,7 +406,11 @@
         aCarb += gammaRate(meal.carbs, tau, 45, 240);
         aProt += gammaRate(meal.protein, tau, 90, 300);
         aFat  += gammaRate(meal.fat, tau, 120, 360);
-        if (meal.alcohol) aAlc += gammaRate(meal.alcohol, tau, 20, 240);
+        // With food in the stomach the peak shifts 20 -> 45 min and the curve
+        // flattens; the shorter support also leaves ~9% unabsorbed, which stands
+        // in for first-pass gastric metabolism (Jones & Jonsson 1994).
+        if (meal.alcohol) aAlc += meal.withFood ? gammaRate(meal.alcohol, tau, 45, 180)
+                                                : gammaRate(meal.alcohol, tau, 20, 240);
         if (meal.min <= m && meal.min > lastMealMin) { lastMealMin = meal.min; lastMealName = meal.name; }
       }
       const gutActive = (aCarb + aProt + aFat + aAlc) > 0.01;
@@ -415,6 +454,17 @@
       // Hard ceiling on fat oxidation while ethanol is on board; later stages
       // must not raise fat use back above it.
       const alcoholFatCeiling = alcoholActive ? fatFrac : 1;
+
+      // ---- blood alcohol concentration (Widmark) ---------------------
+      // Derived from the same start-of-step pool the readout shows, so BAC and
+      // the alcohol number always tell the same story, and BAC hits exactly 0
+      // the moment the pool empties.
+      const bac = alcoholAtStepStart > 0 ? alcoholAtStepStart / C.ALCOHOL_G_PER_BAC : 0;
+      const bacToZeroMin = alcoholAtStepStart > 0
+        ? alcoholAtStepStart / ALCOHOL_CLEARANCE_G_PER_MIN : 0;
+      const gramsAtLegal = BAC_LEGAL_US * C.ALCOHOL_G_PER_BAC;
+      const bacToLegalMin = alcoholAtStepStart > gramsAtLegal
+        ? (alcoholAtStepStart - gramsAtLegal) / ALCOHOL_CLEARANCE_G_PER_MIN : 0;
 
       // obligatory ethanol oxidation first (displaces other fuels)
       let ethanolKcal = 0;
@@ -656,6 +706,7 @@
         // must not be the pre-burn value. The display fields are separate.
         alcoholInSystem,
         alcoholDuringStep: alcoholAtStepStart,   // what was on board during the step
+        bac, bacToZeroMin, bacToLegalMin,        // Widmark BAC trace (g/dL) + estimates
         alcoholActive,                           // drove suppression + flag this step
         fatStored_g, fatDelta: fatStored_g - fatStartReserve,
         cumSurplusGlucose, daySurplusGlucose,
@@ -715,6 +766,8 @@
   window.MET_INFO = { AEROBIC_MET, RESIST_MET };
   window.simUtil = { hhmmToMin, minToLabel, stampLabel };
   window.ALCOHOL_REPORT_MIN = ALCOHOL_REPORT_MIN;
+  window.BAC_THRESHOLDS = BAC_THRESHOLDS;
+  window.BAC_LEGAL_US = BAC_LEGAL_US;
   window.SIM_DAYS = DAYS;
   window.SIM_STEPS = STEPS;
   window.SIM_STEPS_PER_DAY = STEPS_PER_DAY;

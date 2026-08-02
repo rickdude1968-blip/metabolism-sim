@@ -235,6 +235,13 @@
         <h3>5 · Running calorie balance</h3>
         <div class="chart-wrap"><canvas id="chartBalance"></canvas></div>
       </div>
+      <div class="chart-card" id="bacCard" style="display:none">
+        <h3>6 · Blood alcohol (BAC) <span class="hint">estimated — dashed lines mark reference thresholds; tinted band is above the US 0.08 limit</span></h3>
+        <div class="chart-wrap"><canvas id="chartBac"></canvas></div>
+        <p class="bac-disclaimer">Estimates from average metabolism rates. Individual BAC varies by
+          roughly ±15–20%, and this model does not know your tolerance, medications, or health.
+          <b>When in doubt, do not drive.</b></p>
+      </div>
       </div><!-- /#tabOutput -->
     </main>
   </div>
