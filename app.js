@@ -575,13 +575,13 @@
   }
   // Filename = scenario name + timestamp, sanitized. People accumulate several
   // of these, so "export.json" would be useless.
-  function scenarioFilename(name, iso) {
+  function scenarioFilename(name, iso, ext) {
     const d = iso ? new Date(iso) : new Date();
     const p = n => String(n).padStart(2, '0');
     const stamp = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
                   '_' + p(d.getHours()) + p(d.getMinutes());
     const safe = (name || 'scenario').replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'scenario';
-    return safe + '_' + stamp + '.json';
+    return safe + '_' + stamp + (ext || '.json');
   }
   function scenStatus(msg) { const el = $('scenFileStatus'); if (el) el.textContent = msg || ''; }
 
@@ -744,6 +744,80 @@
     return rows.filter(r => r.some(c => (c || '').trim() !== ''));
   }
 
+  // ---- CSV export --------------------------------------------------------
+  // Writes the SAME 14-column layout importEventsCsv reads, so a file exported
+  // here can be edited in a spreadsheet and imported straight back. Every row
+  // gets "x" in Total so it re-imports; blank out that cell (or type anything
+  // else) to park a row without deleting it.
+  const CSV_HEAD = ['Date', 'Day', 'Event', 'Time', 'End', 'Total (x/o)', 'Exercise',
+                    'What', 'Name', 'Kcal', 'Prot', 'Carb', 'Fat', 'Alc'];
+  function csvCell(v) {
+    const s = (v === undefined || v === null) ? '' : String(v);
+    return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+  function buildEventsCsv() {
+    const hh = window.simUtil.hhmmToMin, lbl = window.simUtil.minToLabel;
+    const rows = [CSV_HEAD];
+    const sorted = schedule.slice().sort((a, b) =>
+      ((+a.day || 1) - (+b.day || 1)) || (sortKey(a) - sortKey(b)));
+    for (const ev of sorted) {
+      const r = new Array(CSV_HEAD.length).fill('');
+      r[1] = +ev.day || 1;          // Day
+      r[5] = 'x';                   // Total (x/o) — marks the row as live
+      if (ev.type === 'meal') {
+        r[2] = 'Meal'; r[3] = ev.time; r[8] = ev.name || 'Meal';
+        r[9] = ev.kcal; r[10] = ev.protein; r[11] = ev.carbs; r[12] = ev.fat; r[13] = ev.alcohol;
+      } else if (ev.type === 'aerobic' || ev.type === 'resistance') {
+        r[2] = ev.type === 'aerobic' ? 'Aerobic' : 'Resistance';
+        r[3] = ev.start;
+        // End = start + duration, which is how the importer recovers duration.
+        r[4] = lbl(hh(ev.start) + (+ev.duration || 0));
+        r[6] = ev.intensity;
+      } else if (ev.type === 'sleep') {
+        r[2] = 'Sleep'; r[3] = ev.start; r[4] = ev.end;
+      } else continue;
+      rows.push(r);
+    }
+    // Leading BOM + CRLF so Excel opens it cleanly; the importer ignores both
+    // (the BOM lands in the Date column, which it never reads).
+    return { text: '﻿' + rows.map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n',
+             count: rows.length - 1 };
+  }
+
+  function downloadCsv(text, filename, count) {
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/csv' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; a.rel = 'noopener';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);   // revoking at once cancels it in Safari
+    $('csvStatus').textContent = 'Saved ' + filename + ' — ' + count + ' event' + (count !== 1 ? 's' : '') + '.';
+  }
+
+  function exportEventsCsv() {
+    if (!schedule.length) { $('csvStatus').textContent = 'No events to export yet.'; return; }
+    const built = buildEventsCsv();
+    const base = ($('scenName') && ($('scenName').value || '').trim()) || 'events';
+    const filename = scenarioFilename(base, null, '.csv');
+
+    let file = null;
+    try { file = new File([built.text], filename, { type: 'text/csv' }); } catch (e) { /* no File ctor */ }
+
+    // Same reasoning as the scenario export: on touch devices the share sheet is
+    // the only reliable route into Files.app, and it must be reached without an
+    // intervening await or the browser rejects it as gestureless.
+    if (canShareFiles(file)) {
+      $('csvStatus').textContent = 'Opening the share sheet — choose "Save to Files" to keep it.';
+      navigator.share({ files: [file], title: filename }).then(
+        () => { $('csvStatus').textContent = 'Shared ' + filename + ' — ' + built.count + ' events.'; },
+        e => {
+          if (e && e.name === 'AbortError') { $('csvStatus').textContent = ''; return; }
+          downloadCsv(built.text, filename, built.count);
+        });
+      return;
+    }
+    downloadCsv(built.text, filename, built.count);
+  }
+
   function importEventsCsv(file) {
     const reader = new FileReader();
     reader.onload = () => {
@@ -779,8 +853,15 @@
         } else if (type === 'aerobic' || type === 'resistance') {
           if (!timeRaw) { ignored++; continue; }
           const endRaw = cell(4);
-          let dur = 30;
-          if (endRaw) { const d = hh(endRaw) - hh(timeRaw); if (d > 0) dur = d; }   // no End -> 30 min
+          let dur = 30;                                              // no End -> 30 min
+          if (endRaw) {
+            const d = hh(endRaw) - hh(timeRaw);
+            if (d > 0) dur = d;                                      // End later the same day
+            // End past midnight (23:30 -> 00:15) reads as negative. Accept the
+            // wrap only for a plausible session length; a bigger number is far
+            // more likely an End-before-Time typo, so keep the 30 min default.
+            else if (d + 1440 <= 360) dur = d + 1440;
+          }
           let intensity = cell(6).toLowerCase();                                    // Column G
           if (type === 'resistance') {
             if (intensity === 'vigorous') intensity = 'hard';                       // resistance has no "vigorous"
@@ -835,6 +916,7 @@
       renderList(); showDerived(); run(); flushWorking();
     };
     $('csvImport').addEventListener('change', e => { if (e.target.files[0]) importEventsCsv(e.target.files[0]); e.target.value = ''; });
+    if ($('csvExport')) $('csvExport').onclick = exportEventsCsv;
 
     // Last chance to persist: mobile Safari may never fire unload before it
     // discards a backgrounded tab, but it does fire these.

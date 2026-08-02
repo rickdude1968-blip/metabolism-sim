@@ -117,6 +117,23 @@ midday run for an evening resistance session, to show the variation).
 Click **Run simulation** after editing to recompute. **Reset to example**
 restores the sample week and default profile.
 
+### Exporting events to a CSV
+**Export events CSV…** saves the current schedule as a spreadsheet using the very
+same column layout the importer reads, so you can open it in Excel or Sheets,
+edit or extend it, and bring it straight back in with **Import events CSV…**.
+
+Every exported row carries `x` in the **Total (x/o)** column so it re-imports.
+To park a row without deleting it, blank that cell out (or put anything other
+than `x` there) and the importer will skip it — handy for keeping alternatives
+in the file.
+
+Exercise rows are written as `Time` + `End`, which is how the importer recovers
+the duration; **Sleep** uses `End` as the wake time. The `Date` and `What`
+columns are left blank — the model doesn't use them, and the importer ignores
+them, so they're yours for notes. Files are named from the scenario name plus a
+timestamp (`My_Week_2026-08-01_1018.csv`), and are written with a BOM so Excel
+opens accented characters correctly.
+
 ### Importing events from a CSV
 **Import events CSV…** adds events from a spreadsheet without touching anything
 already in the schedule (so if a row duplicates an existing event, delete one
@@ -300,6 +317,7 @@ or unburned dietary fat) and **down when you burn body fat**, so it drifts with
 the circumstances rather than only climbing. The "Δ … this run" shows the net
 change since the start of the current 5-day window; the absolute reserve carries
 over if you use **Continue**.
+
 
 ---
 
