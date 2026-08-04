@@ -27,6 +27,10 @@
   let playTimer = null;
   let carryOverState = null;   // when set, the next run continues from this body state
   let carryOverCarryIn = null; // real trailing events from the previous block
+  // A cosmetic label for Day 1 so different scenarios can be told apart. It is
+  // deliberately NEVER passed to runSimulation — every calculation is keyed off
+  // the Day number alone, so a scenario behaves identically with or without it.
+  let startDate = '';
   const STEPS = window.SIM_STEPS || 288;
 
   const $ = id => document.getElementById(id);
@@ -66,6 +70,18 @@
       `<div><span>Fat-ox capacity</span><b>${C.FAT_OXIDATION_CAPACITY.toFixed(2)} g/min</b></div>`;
   }
 
+  // Calendar date for a 1-based day number, or '' when no Day 1 date is set.
+  // Parsed component-wise: new Date('2026-08-04') is UTC midnight and would show
+  // the previous day west of Greenwich.
+  function dayDate(n) {
+    if (!startDate) return '';
+    const p = String(startDate).split('-').map(Number);
+    if (p.length !== 3 || !p.every(isFinite)) return '';
+    const d = new Date(p[0], p[1] - 1, p[2] + (n - 1));
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+  }
+
   // ---- schedule list rendering ------------------------------------------
   const DAYS = window.SIM_DAYS || 5;
   function evLabel(ev) {
@@ -87,7 +103,9 @@
     let html = '';
     for (let d = 1; d <= DAYS; d++) {
       const items = (byDay[d] || []).sort((a, b) => sortKey(a.ev) - sortKey(b.ev));
-      html += `<div class="day-group"><div class="day-head">Day ${d}</div>`;
+      const dd = dayDate(d);
+      html += `<div class="day-group"><div class="day-head">Day ${d}` +
+              (dd ? ` <span class="day-date">· ${dd}</span>` : '') + `</div>`;
       html += items.length
         ? items.map(({ ev, idx }) =>
             `<div class="event ${ev.type}"><span>${evLabel(ev)}</span>` +
@@ -205,7 +223,8 @@
     $('nowSlider').value = idx;
     if (!simData) return;
     const d = simData[idx];
-    $('nowLabel').textContent = d.timeLabel;
+    const dd = dayDate((d.dayIndex || 0) + 1);
+    $('nowLabel').textContent = d.timeLabel + (dd ? '  ·  ' + dd : '');
     window.updateNowLine(idx);
     renderStatus(d);
   }
@@ -306,7 +325,7 @@
   // Stores INPUTS ONLY (profile, schedule, settings) plus the carried-in state.
   // The trajectory is never serialized — it regenerates, so files stay small
   // and survive model changes.
-  const SCHEMA_VERSION = 1;
+  const SCHEMA_VERSION = 2;
   const APP_ID = 'metabolism-simulator';                  // shared by both editions
   const LEGACY_APP_IDS = ['metabolism-sim', 'metabolism-edu'];   // pre-v1 exports
   const STATE_FIELDS = ['liver', 'muscle', 'aminoPool', 'insulin', 'alcoholInSystem', 'fatStored_g'];
@@ -326,10 +345,18 @@
       created: new Date().toISOString(),
       profile: readProfile(),
       settings: {},
+      startDate: startDate || null,        // label only; no calculation reads it
       schedule: JSON.parse(JSON.stringify(schedule)),
-      // Carried-in body state + the real trailing events that reproduce history.
-      initialState: (simData && simData.endState) ? simData.endState : null,
-      carryInEvents: (simData && simData.carryIn) ? simData.carryIn : null
+      // Where this run ENDED, plus the trailing events that let the next block
+      // reproduce its history. These are what a continuation starts FROM.
+      endState: (simData && simData.endState) ? simData.endState : null,
+      carryInEvents: (simData && simData.carryIn) ? simData.carryIn : null,
+      // Where this run BEGAN — null for a fresh run. Recorded so a chain can be
+      // audited after the fact: block B's startedFrom should equal block A's
+      // endState. (v1 files stored only the end state, under the misleading
+      // name "initialState", so a continuation could not be checked later.)
+      startedFrom: carryOverState || null,
+      startedFromCarryIn: carryOverCarryIn || null
     };
   }
 
@@ -394,37 +421,61 @@
     // --- initial state (optional, but must be COMPLETE if present) -------
     // A missing field arriving as undefined would become NaN inside the
     // integrator and silently produce curves that render fine and mean nothing.
-    const rawState = ver === 0 ? raw.endState : raw.initialState;
-    let initialState = null;
+    // v2 calls it endState; v1 called the same thing initialState; the original
+    // pre-schema export also used endState. Prefer the correctly-named one.
+    const rawState = raw.endState !== undefined ? raw.endState : raw.initialState;
+    let endState = null;
     if (rawState !== undefined && rawState !== null) {
-      if (typeof rawState !== 'object' || Array.isArray(rawState)) bad.push('"initialState" must be an object');
+      if (typeof rawState !== 'object' || Array.isArray(rawState)) bad.push('"endState" must be an object');
       else {
-        initialState = {};
+        endState = {};
         STATE_FIELDS.forEach(k => {
-          if (!isNum(rawState[k])) bad.push('initialState.' + k + ' must be a finite number (got ' + show(rawState[k]) + ') — an incomplete state would produce meaningless results');
-          else initialState[k] = rawState[k];
+          if (!isNum(rawState[k])) bad.push('endState.' + k + ' must be a finite number (got ' + show(rawState[k]) + ') — an incomplete state would produce meaningless results');
+          else endState[k] = rawState[k];
         });
       }
     }
 
-    // --- carry-in events (optional) --------------------------------------
-    let carryInEvents = null;
-    if (raw.carryInEvents !== undefined && raw.carryInEvents !== null) {
-      if (!Array.isArray(raw.carryInEvents)) bad.push('"carryInEvents" must be a list');
+    // --- carry-in event lists (optional) ---------------------------------
+    function checkCarryIn(list, field) {
+      if (list === undefined || list === null) return null;
+      if (!Array.isArray(list)) { bad.push('"' + field + '" must be a list'); return null; }
+      const out = [];
+      list.forEach((ev, i) => {
+        const at = field + '[' + i + ']';
+        if (!ev || typeof ev !== 'object') { bad.push(at + ' is not an event object'); return; }
+        if (EVENT_TYPES.indexOf(ev.type) < 0) { bad.push(at + '.type must be one of ' + EVENT_TYPES.join(' / ') + ' (got ' + show(ev.type) + ')'); return; }
+        if (!(isNum(ev.minutesBefore) && ev.minutesBefore >= 0)) bad.push(at + '.minutesBefore must be a number >= 0 (got ' + show(ev.minutesBefore) + ')');
+        if (ev.type !== 'meal' && !(isNum(ev.duration) && ev.duration > 0)) bad.push(at + '.duration must be a positive number (got ' + show(ev.duration) + ')');
+        if (ev.type === 'meal') ['kcal', 'carbs', 'protein', 'fat', 'alcohol'].forEach(k => {
+          if (ev[k] !== undefined && !isNum(ev[k])) bad.push(at + '.' + k + ' must be a finite number (got ' + show(ev[k]) + ')');
+        });
+        out.push(ev);
+      });
+      return out;
+    }
+    const carryInEvents = checkCarryIn(raw.carryInEvents, 'carryInEvents');
+    const startedFromCarryIn = checkCarryIn(raw.startedFromCarryIn, 'startedFromCarryIn');
+
+    // --- startedFrom (optional; complete if present) ----------------------
+    let startedFrom = null;
+    if (raw.startedFrom !== undefined && raw.startedFrom !== null) {
+      if (typeof raw.startedFrom !== 'object' || Array.isArray(raw.startedFrom)) bad.push('"startedFrom" must be an object');
       else {
-        carryInEvents = [];
-        raw.carryInEvents.forEach((ev, i) => {
-          const at = 'carryInEvents[' + i + ']';
-          if (!ev || typeof ev !== 'object') { bad.push(at + ' is not an event object'); return; }
-          if (EVENT_TYPES.indexOf(ev.type) < 0) { bad.push(at + '.type must be one of ' + EVENT_TYPES.join(' / ') + ' (got ' + show(ev.type) + ')'); return; }
-          if (!(isNum(ev.minutesBefore) && ev.minutesBefore >= 0)) bad.push(at + '.minutesBefore must be a number >= 0 (got ' + show(ev.minutesBefore) + ')');
-          if (ev.type !== 'meal' && !(isNum(ev.duration) && ev.duration > 0)) bad.push(at + '.duration must be a positive number (got ' + show(ev.duration) + ')');
-          if (ev.type === 'meal') ['kcal', 'carbs', 'protein', 'fat', 'alcohol'].forEach(k => {
-            if (ev[k] !== undefined && !isNum(ev[k])) bad.push(at + '.' + k + ' must be a finite number (got ' + show(ev[k]) + ')');
-          });
-          carryInEvents.push(ev);
+        startedFrom = {};
+        STATE_FIELDS.forEach(k => {
+          if (!isNum(raw.startedFrom[k])) bad.push('startedFrom.' + k + ' must be a finite number (got ' + show(raw.startedFrom[k]) + ')');
+          else startedFrom[k] = raw.startedFrom[k];
         });
       }
+    }
+
+    // --- startDate (optional label; never used in any calculation) --------
+    let sDate = '';
+    if (raw.startDate !== undefined && raw.startDate !== null && raw.startDate !== '') {
+      if (typeof raw.startDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(raw.startDate))
+        bad.push('"startDate" must be a YYYY-MM-DD date or empty (got ' + show(raw.startDate) + ')');
+      else sDate = raw.startDate;
     }
 
     if (bad.length) {
@@ -438,7 +489,8 @@
       name: typeof raw.name === 'string' ? raw.name : '',
       created: typeof raw.created === 'string' ? raw.created : (raw.savedAt || ''),
       profile: p, settings: (raw.settings && typeof raw.settings === 'object') ? raw.settings : {},
-      schedule: raw.schedule, initialState, carryInEvents
+      schedule: raw.schedule, startDate: sDate,
+      endState, carryInEvents, startedFrom, startedFromCarryIn
     };
   }
 
@@ -448,16 +500,18 @@
     $('pWeight').value = p.weight; $('pHeight').value = p.height; $('pAge').value = p.age;
     $('pSex').value = p.sex; $('pTraining').value = p.training;
     schedule = JSON.parse(JSON.stringify(scn.schedule));
+    startDate = scn.startDate || '';
+    if ($('startDate')) $('startDate').value = startDate;
     // "Continue" starts the next 5 days from the saved end-state; otherwise fresh.
     const wantContinue = $('scenContinue') && $('scenContinue').checked;
-    if (wantContinue && scn.initialState) {
-      carryOverState = scn.initialState;
+    if (wantContinue && scn.endState) {
+      carryOverState = scn.endState;
       carryOverCarryIn = scn.carryInEvents || [];
       if (!scn.carryInEvents)
         alert('Continuing, but this file predates carry-in events: the first few hours after the seam will be approximate. Re-run and re-save to get an exact continuation.');
     } else {
       carryOverState = null; carryOverCarryIn = null;
-      if (wantContinue && !scn.initialState)
+      if (wantContinue && !scn.endState)
         alert('This scenario has no saved end-state, so it will load fresh. Run it, save it again, then Continue will work.');
     }
     renderList(); showDerived(); run(); flushWorking();
@@ -497,7 +551,8 @@
       created: new Date().toISOString(),
       profile: readProfile(), settings: {},
       schedule: JSON.parse(JSON.stringify(schedule)),
-      initialState: carryOverState, carryInEvents: carryOverCarryIn,
+      startDate: startDate || null,
+      startedFrom: carryOverState, startedFromCarryIn: carryOverCarryIn,
       draft: readDraft(), activeTab: activeTab
     };
   }
@@ -527,7 +582,12 @@
     $('pWeight').value = p.weight; $('pHeight').value = p.height; $('pAge').value = p.age;
     $('pSex').value = p.sex; $('pTraining').value = p.training;
     schedule = JSON.parse(JSON.stringify(scn.schedule));
-    carryOverState = scn.initialState; carryOverCarryIn = scn.carryInEvents;
+    // startedFrom is where this session's run was seeded; older working states
+    // stored the same thing under initialState, which parseScenario maps to endState.
+    carryOverState = scn.startedFrom || scn.endState;
+    carryOverCarryIn = scn.startedFromCarryIn || scn.carryInEvents;
+    startDate = scn.startDate || '';
+    if ($('startDate')) $('startDate').value = startDate;
     if (scn.name) $('scenName').value = scn.name;
     applyDraft(raw.draft);
     // parseScenario normalises away anything it does not know about, so the tab
@@ -937,11 +997,17 @@
     $('resetBtn').onclick = () => {
       schedule = JSON.parse(JSON.stringify(window.DEFAULT_SCHEDULE));
       carryOverState = null; carryOverCarryIn = null;         // back to a fresh body
+      startDate = ''; if ($('startDate')) $('startDate').value = '';
       if ($('scenContinue')) $('scenContinue').checked = false;
       $('pWeight').value = 80; $('pHeight').value = 175; $('pAge').value = 35;
       $('pSex').value = 'male'; $('pTraining').value = 'recreational';
       renderList(); showDerived(); run(); flushWorking();
     };
+    if ($('startDate')) $('startDate').addEventListener('change', e => {
+      startDate = e.target.value || '';
+      // Relabel only. No re-run: the date feeds nothing the model computes.
+      renderList(); setNow(+$('nowSlider').value); saveWorking();
+    });
     $('csvImport').addEventListener('change', e => { if (e.target.files[0]) importEventsCsv(e.target.files[0]); e.target.value = ''; });
     if ($('csvExport')) $('csvExport').onclick = exportEventsCsv;
 

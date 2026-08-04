@@ -87,6 +87,11 @@
 
       <section>
         <h2>Schedule</h2>
+        <!-- Purely a label so scenarios can be told apart. Nothing in the model
+             reads it: every calculation is keyed off the Day number alone. -->
+        <label class="startdate">Day 1 date <span class="opt">(optional label — not used in any calculation)</span>
+          <input id="startDate" type="date" />
+        </label>
         <div id="eventList" class="event-list"></div>
 
         <details class="adder">

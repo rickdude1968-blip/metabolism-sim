@@ -115,6 +115,11 @@ button.primary:hover, .add-block button:hover { background: var(--accent-d); }
 .csv-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
 .csv-status { font-size: 11px; color: var(--muted); flex: 1 1 100%; }
 
+/* ---- Day 1 date label ---- */
+.startdate { margin-bottom: 10px; }
+.startdate .opt { font-weight: 400; text-transform: none; letter-spacing: 0; }
+.day-head .day-date { font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--muted); }
+
 /* ---- BAC ---- */
 .bac-disclaimer { font-size: 11px; line-height: 1.4; color: #7a5b00; background: #fff7e6;
   border: 1px solid #ffe0a3; border-radius: 7px; padding: 6px 9px; margin: 8px 0 0; }

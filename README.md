@@ -195,24 +195,56 @@ it later without re-entering anything.
   window, EPOC and the lactate flush exactly right; the six body-state numbers
   alone cannot express them.
 
-### The scenario file format (schema v1)
+### The scenario file format (schema v2)
 Exported `.json` files store **inputs only** — never the computed curves — so
 they stay small (~6 KB) and keep working as the model changes:
 
 | Field | Purpose |
 |---|---|
-| `schemaVersion` | Format version (currently `1`). A file from a newer version is refused rather than half-read. |
+| `schemaVersion` | Format version (currently `2`). A file from a newer version is refused rather than half-read; older v0/v1 files still load. |
 | `app` | `"metabolism-simulator"`. Files from other programs are rejected cleanly. Both editions share this ID, so exports are interchangeable between them. |
 | `name`, `created` | Human-readable label and ISO timestamp. |
 | `profile` | Body parameters. |
 | `settings` | Simulation settings (Metabolism-EDU stores its meal-timing offset here; the plain simulator ignores it). |
 | `schedule` | Your meals / exercise / sleep events. |
-| `initialState` | The six carried body-state values, or `null`. |
-| `carryInEvents` | Real trailing events from the previous block, or `null`. |
+| `startDate` | **Optional label** for Day 1, or `null`. Purely cosmetic — see below. |
+| `endState` | Where this run **ended** — the six body-state values a continuation starts from, or `null`. |
+| `carryInEvents` | Real trailing events from the end of this run, or `null`. |
+| `startedFrom` | Where this run **began**, or `null` for a fresh run. |
+| `startedFromCarryIn` | The carry-in events this run was actually seeded with, or `null`. |
 
 Files are named from the scenario name plus a timestamp
 (`My_Week_1_2026-07-21_1432.json`), so they stay distinguishable once several
 pile up.
+
+#### Reading a chain
+`endState` and `startedFrom` are two different things, and the distinction
+matters when you chain blocks:
+
+- **`endState`** is where that file's run *finished*. Tick **Continue** on import
+  and the next block starts from exactly this.
+- **`startedFrom`** is where that file's run *began* — `null` if it was a fresh
+  run rather than a continuation.
+
+So to confirm block B really followed block A, open both files and check that
+**B's `startedFrom` equals A's `endState`**. They should match digit for digit.
+
+> Schema v1 stored only the end state, under the name `initialState` — which
+> read like "where this run started" but held the opposite. A v1 file therefore
+> cannot tell you what it was seeded with. v1 files still load (their
+> `initialState` is treated as the end state, which is what it was), but they
+> will show no `startedFrom` until you re-run and re-save them as v2.
+
+#### The Day 1 date
+`startDate` is an **optional label only**, so you can tell one week's scenario
+from another at a glance. Set it under **Schedule → Day 1 date** and the day
+headers and the "now" cursor pick up calendar dates (`Day 3 · Thu, Aug 6`).
+
+**Nothing in the model reads it.** Every calculation is keyed off the Day
+*number* alone, so a scenario behaves identically whether the date is set,
+cleared, or wrong — the date is never even passed to the simulation engine.
+That means you can compare scenarios from different weeks freely without the
+dates affecting anything.
 
 **Import is validated before anything is loaded.** A file with the wrong `app`,
 a too-new `schemaVersion`, a missing field, or a non-numeric value is rejected
