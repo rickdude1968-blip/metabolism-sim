@@ -41,15 +41,16 @@ deficit compounding, or a rest day letting glycogen recover).
 1. [Quick start](#quick-start)
 2. [What's in the folder](#whats-in-the-folder)
 3. [How to use it](#how-to-use-it)
-4. [How the model works](#how-the-model-works)
-5. [The charts and status panel](#the-charts-and-status-panel)
-6. [Deliberate deviations from a literal reading of the spec](#deliberate-deviations)
-7. [Limitations (what it does NOT model)](#limitations)
-8. [System requirements & restrictions](#system-requirements--restrictions)
-9. [Possible errors & troubleshooting](#possible-errors--troubleshooting)
-10. [Customizing / editing the app](#customizing--editing-the-app)
-11. [Scientific references](#scientific-references)
-12. [License](#license)
+4. [Using it on a phone](#using-it-on-a-phone)
+5. [How the model works](#how-the-model-works)
+6. [The charts and status panel](#the-charts-and-status-panel)
+7. [Deliberate deviations from a literal reading of the spec](#deliberate-deviations)
+8. [Limitations (what it does NOT model)](#limitations)
+9. [System requirements & restrictions](#system-requirements--restrictions)
+10. [Possible errors & troubleshooting](#possible-errors--troubleshooting)
+11. [Customizing / editing the app](#customizing--editing-the-app)
+12. [Scientific references](#scientific-references)
+13. [License](#license)
 
 ---
 
@@ -64,23 +65,30 @@ deficit compounding, or a rest day letting glycogen recover).
 No installation, no internet connection, and no server are required. It works
 on Windows, macOS, and Linux, and fully offline.
 
+On a **phone**, open it from a hosted link instead of a local file — see
+[Using it on a phone](#using-it-on-a-phone).
+
 ---
 
 ## What's in the folder
 
-All six files must travel together and keep their names. `index.html` loads the
-other five by their exact filenames, so renaming or separating them will break
-the app.
+Everything must stay in one folder and keep its filename — `index.html` loads
+the rest by exact name, so renaming or separating them breaks the app.
 
 | File | What it does |
 |------|--------------|
 | `index.html` | The page itself — layout, input controls, chart containers. **This is the file you open.** |
 | `simulation.js` | The metabolic model. Runs the 5-minute-step simulation and returns 1,440 timesteps (5 days) of data. The number of days is the `DAYS` constant near the top — change it to simulate a different span. |
-| `charts.js` | Draws the five charts using Chart.js, plus the meal/exercise/sleep shading and the draggable "now" cursor. |
-| `app.js` | Connects the buttons, sliders, and schedule builder to the model; writes the status panel. |
+| `charts.js` | Draws the six charts using Chart.js, plus the meal/exercise/sleep shading and the draggable "now" cursor. |
+| `app.js` | Connects the buttons, sliders, and schedule builder to the model; writes the status panel; handles files and autosave. |
 | `styles.css` | Colors, layout, and styling. |
 | `chart.umd.min.js` | The Chart.js graphing library, bundled locally so no internet is needed. |
+| `manifest.json` | Lets the app be installed to a phone home screen. |
+| `icon-192.png`, `icon-512.png` | App icons used by the manifest. |
+| `apple-touch-icon.png` | The home-screen icon on iOS, which ignores the manifest's icons. |
+| `LICENSE` | The GNU GPL v3, which this program is released under. |
 | `README.md` | This file. |
+| `test/roundtrip-test.html` | A regression test — see [Regression test](#regression-test--run-this-after-changing-the-model). Not needed to run the app. |
 
 ---
 
@@ -266,6 +274,69 @@ a finite number"*). Nothing is ever partially applied — a half-loaded scenario
 would otherwise reach the model as `NaN` and produce curves that look fine and
 mean nothing. Older files saved before this format are still accepted, with a
 note that their continuation will be approximate across the seam.
+
+---
+
+## Using it on a phone
+
+The app is a normal web page, so it works on a phone browser as-is — but a few
+things are built specifically for touch.
+
+### Getting it onto a phone
+Host the folder as a static site (this repo is set up for **GitHub Pages** —
+`index.html` is at the root, all asset paths are relative, and a `.nojekyll`
+file stops Pages from reprocessing it) and open the link on the phone. No build
+step is needed.
+
+**Install it to the home screen** for a full-screen, app-like window: *Share →
+Add to Home Screen* on iOS, or *Install app* / *Add to Home screen* on Android.
+`manifest.json` and `apple-touch-icon.png` supply the name and icon.
+
+> There is **deliberately no service worker**, so the app is not available
+> offline from the home screen. That is a choice, not an omission: an offline
+> cache would pin anyone who installed it to a stale build while the model is
+> still changing. Every open fetches the current version.
+
+### The bottom tab bar
+On narrow screens the layout collapses to three tabs — **📝 Events**,
+**📈 Output**, **💾 Files** — instead of trying to show the schedule and the
+charts side by side. On a wide screen the tab bar disappears and everything is
+visible at once. Banners (carry-over, backup reminders) sit outside the tabs so
+they stay visible whichever one is open.
+
+### Your work is saved as you go
+Edits are **autosaved to the browser** a moment after you make them, and
+restored when you come back — mobile Safari discards backgrounded tabs
+aggressively, and a half-entered schedule is painful to lose. You will see
+*"Restored your unsaved work from this browser"* when that happens.
+
+This is a convenience, not a backup:
+
+- It lives only in **that browser on that device**. Clearing browsing data
+  erases it.
+- iOS Safari evicts storage after about **7 days without a visit**, unless the
+  app has been added to the home screen.
+- After a few days without an export, a reminder appears suggesting you save a
+  file. **Export / share…** or **Copy as text** both count as backing up, and
+  dismiss it.
+
+For anything you want to keep, export a `.json` file.
+
+### Getting files in and out on touch
+`<a download>` is unreliable on iOS Safari — it tends to open the file in a
+viewer instead of saving it — so on touch devices **Export / share…** opens the
+system **share sheet** (choose *Save to Files*, or send it to yourself). On a
+desktop it stays a plain one-click download, because the share dialog there
+often cannot save to disk at all.
+
+Some in-app browsers (Instagram, Facebook, several mail clients) block both
+downloads *and* the share sheet. For those there is **Copy as text** and
+**Paste text…**, which move a scenario through the clipboard and always work.
+
+### Known limitation — do not expect AirDrop to work
+A web app on iOS cannot register as a handler for `.json` files. If someone
+AirDrops you a scenario, **tapping it will not open this app**. The flow is:
+open the app → **Import file…** → pick it from Files.
 
 ---
 
@@ -486,18 +557,20 @@ assuming your body would behave that way.
   last five years. Chart.js 4 needs a reasonably current browser.
 - **JavaScript must be enabled** (it is, by default, in normal browsers).
 - **Will not run in Internet Explorer.**
-- No internet, no account, no install, no admin rights, and no data leaves your
-  computer — everything runs locally in the browser.
-- Best viewed on a screen at least ~1000 px wide; it reflows to a single column
-  on narrow windows and phones, but the charts are easier to read on a laptop or
-  desktop.
+- No account, no admin rights, and no data leaves your device — everything runs
+  locally in the browser. Opened from a local folder it needs no internet at
+  all; served from a link it fetches only the page itself.
+- **Phones and tablets are supported.** Below ~980 px the layout switches to a
+  three-tab view built for touch, and the app can be installed to the home
+  screen — see [Using it on a phone](#using-it-on-a-phone). The charts are still
+  easier to read on a larger screen.
 
 ---
 
 ## Possible errors & troubleshooting
 
 **The page is blank, unstyled, or the charts don't appear.**
-- The most common cause is that the files got separated. All six files must be
+- The most common cause is that the files got separated. Every file must be
   in the **same folder**, with their **original names**. If you copied only
   `index.html`, go back and copy the whole folder.
 - Make sure you extracted the ZIP rather than opening `index.html` from *inside*
