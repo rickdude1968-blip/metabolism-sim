@@ -179,11 +179,21 @@
           <button id="scenSave" class="primary">Save</button>
         </div>
         <div id="scenList" class="scenario-list"></div>
-        <label class="scen-continue" title="Charts reset to a fresh 5 days; glycogen, amino acids, and body fat start where the saved run ended">
+        <label class="scen-continue" title="Applies when you Load or Import a WHOLE scenario: that file's schedule replaces yours, and its saved ending becomes its starting point">
           <input type="checkbox" id="scenContinue" />
-          <span><b>Continue</b> — start the next 5 days from the saved end-state
-            (charts reset; glycogen &amp; body fat carry over)</span>
+          <span><b>Continue</b> — when loading a <i>whole</i> scenario, start it from
+            that file's own saved ending (its schedule replaces the current one)</span>
         </label>
+
+        <!-- Takes ONLY the ending state out of a file. The current schedule,
+             profile and Day 1 date are left exactly as they are — which is what
+             you want when this week is already built and you just need last
+             week's finish as its starting point. -->
+        <label class="filebtn startstate" title="Read only the ending body state from another scenario and use it as this scenario's starting point. Your schedule, profile and date are untouched.">
+          Set start state from file…
+          <input id="startStateImport" type="file" accept=".json,application/json,text/plain" hidden />
+        </label>
+        <p id="startStateStatus" class="scen-hint"></p>
         <div class="btn-row">
           <button id="scenExport" title="Save or share the current setup as a .json file">Export / share…</button>
           <label class="filebtn" title="Load a scenario from a .json file">Import file…

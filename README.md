@@ -177,6 +177,19 @@ it later without re-entering anything.
   browsers**, or as a backup — the in-browser saves live only in the browser
   that made them (clearing browser data erases them), whereas a `.json` file is
   portable and permanent. Exported files from the two apps are interchangeable.
+- **Set start state from file… (the usual way to chain weeks):** takes *only*
+  the ending state out of another scenario and uses it as this scenario's
+  starting point. Your **schedule, profile and Day 1 date are left exactly as
+  they are** — which is what you want when this week is already built and you
+  just need last week's finish as its starting point. A banner then names where
+  the state came from, with a **Start fresh instead** button to drop it again
+  without disturbing the schedule.
+
+  Use this rather than Continue + Import if you have already built the week you
+  want to run. **Importing a whole scenario replaces everything** — schedule,
+  profile and date — so importing last week to "adjust the starting point" would
+  quietly discard the week you were working on.
+
 - **Continue (carry the body over):** tick the **Continue** checkbox before you
   Load or Import, and the next 5 days start from that scenario's *ending body
   state* instead of a fresh, fully-fuelled start — liver & muscle glycogen, the

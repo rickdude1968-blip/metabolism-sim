@@ -27,6 +27,7 @@
   let playTimer = null;
   let carryOverState = null;   // when set, the next run continues from this body state
   let carryOverCarryIn = null; // real trailing events from the previous block
+  let carryOverLabel = '';     // human name of where the carry-over came from
   // A cosmetic label for Day 1 so different scenarios can be told apart. It is
   // deliberately NEVER passed to runSimulation — every calculation is keyed off
   // the Day number alone, so a scenario behaves identically with or without it.
@@ -160,10 +161,24 @@
     const el = $('continueBanner');
     if (!el) return;
     if (carryOverState) {
-      el.textContent = '▶ Continuing from a saved end-state — glycogen, amino acids, and body fat carried over. (Reset to example to start fresh.)';
+      const src = carryOverLabel ? ' from <b>' + esc(carryOverLabel) + '</b>' : '';
+      el.innerHTML = '<span>▶ Starting state carried over' + src +
+        ' — glycogen, amino acids and body fat begin where that run ended.</span>' +
+        '<button id="clearCarryBtn" class="mini" title="Discard the carried-over state and start this schedule from a rested, fully-fuelled body. Your schedule is not touched.">Start fresh instead</button>';
       el.style.display = '';
+      const b = $('clearCarryBtn');
+      if (b) b.onclick = clearStartState;
     } else { el.style.display = 'none'; }
   }
+  // Drop the carry-over without disturbing the schedule, profile or date. Before
+  // this existed the only way out was Reset to example, which wiped the schedule.
+  function clearStartState() {
+    carryOverState = null; carryOverCarryIn = null; carryOverLabel = '';
+    if ($('scenContinue')) $('scenContinue').checked = false;
+    startStateStatus('Cleared — this schedule now starts from a rested, fully-fuelled body.');
+    run(); flushWorking();
+  }
+  function startStateStatus(msg) { const el = $('startStateStatus'); if (el) el.textContent = msg || ''; }
 
   // ---- bottom tab navigation (narrow screens only) -----------------------
   const TABS = ['tabEvents', 'tabOutput', 'tabFiles'];
@@ -507,10 +522,11 @@
     if (wantContinue && scn.endState) {
       carryOverState = scn.endState;
       carryOverCarryIn = scn.carryInEvents || [];
+      carryOverLabel = scn.name || '';
       if (!scn.carryInEvents)
         alert('Continuing, but this file predates carry-in events: the first few hours after the seam will be approximate. Re-run and re-save to get an exact continuation.');
     } else {
-      carryOverState = null; carryOverCarryIn = null;
+      carryOverState = null; carryOverCarryIn = null; carryOverLabel = '';
       if (wantContinue && !scn.endState)
         alert('This scenario has no saved end-state, so it will load fresh. Run it, save it again, then Continue will work.');
     }
@@ -553,6 +569,7 @@
       schedule: JSON.parse(JSON.stringify(schedule)),
       startDate: startDate || null,
       startedFrom: carryOverState, startedFromCarryIn: carryOverCarryIn,
+      carryOverLabel: carryOverLabel || null,
       draft: readDraft(), activeTab: activeTab
     };
   }
@@ -586,6 +603,8 @@
     // stored the same thing under initialState, which parseScenario maps to endState.
     carryOverState = scn.startedFrom || scn.endState;
     carryOverCarryIn = scn.startedFromCarryIn || scn.carryInEvents;
+    // cosmetic only, so it comes off the raw object rather than the validated one
+    carryOverLabel = (typeof raw.carryOverLabel === 'string') ? raw.carryOverLabel : '';
     startDate = scn.startDate || '';
     if ($('startDate')) $('startDate').value = startDate;
     if (scn.name) $('scenName').value = scn.name;
@@ -628,6 +647,41 @@
       try { sessionStorage.setItem(DISMISS_KEY, '1'); } catch (e) { /* best-effort */ }
       hideBackupNote();
     };
+  }
+
+  // Read only the ending state out of a scenario file and adopt it as this
+  // scenario's starting point. Deliberately leaves the schedule, profile and
+  // Day 1 date alone — importing a whole scenario replaces all of those, which
+  // is wrong when the week you want to run is already built.
+  function importStartState(file) {
+    const reader = new FileReader();
+    reader.onerror = () => startStateStatus('Could not read that file.');
+    reader.onload = () => {
+      let raw;
+      try { raw = JSON.parse(reader.result); }
+      catch (e) {
+        startStateStatus('That file is not valid JSON, so no starting state was set.');
+        alert('That file is not valid JSON.\n\n(' + e.message + ')');
+        return;
+      }
+      let scn;
+      try { scn = parseScenario(raw); } catch (e) { startStateStatus('No starting state was set.'); alert(e.message); return; }
+      if (!scn.endState) {
+        startStateStatus('No starting state was set.');
+        alert('That scenario has no saved ending state, so there is nothing to start from.\n\n' +
+              'Open it, press Run simulation, and save or export it again — the ending state is recorded at that point.');
+        return;
+      }
+      carryOverState = scn.endState;
+      carryOverCarryIn = scn.carryInEvents || [];
+      carryOverLabel = (scn.name || file.name || 'another scenario');
+      if (!scn.carryInEvents)
+        startStateStatus('Start state set from "' + carryOverLabel + '". That file predates carry-in events, so the first few hours will be approximate.');
+      else
+        startStateStatus('Start state set from "' + carryOverLabel + '" — your schedule, profile and Day 1 date are unchanged.');
+      run(); flushWorking();
+    };
+    reader.readAsText(file);
   }
 
   // Back-compat wrapper used by the in-app saved list.
@@ -996,7 +1050,8 @@
     $('playBtn').onclick = togglePlay;
     $('resetBtn').onclick = () => {
       schedule = JSON.parse(JSON.stringify(window.DEFAULT_SCHEDULE));
-      carryOverState = null; carryOverCarryIn = null;         // back to a fresh body
+      carryOverState = null; carryOverCarryIn = null; carryOverLabel = '';   // fresh body
+      startStateStatus('');
       startDate = ''; if ($('startDate')) $('startDate').value = '';
       if ($('scenContinue')) $('scenContinue').checked = false;
       $('pWeight').value = 80; $('pHeight').value = 175; $('pAge').value = 35;
@@ -1007,6 +1062,9 @@
       startDate = e.target.value || '';
       // Relabel only. No re-run: the date feeds nothing the model computes.
       renderList(); setNow(+$('nowSlider').value); saveWorking();
+    });
+    if ($('startStateImport')) $('startStateImport').addEventListener('change', e => {
+      if (e.target.files[0]) importStartState(e.target.files[0]); e.target.value = '';
     });
     $('csvImport').addEventListener('change', e => { if (e.target.files[0]) importEventsCsv(e.target.files[0]); e.target.value = ''; });
     if ($('csvExport')) $('csvExport').onclick = exportEventsCsv;
