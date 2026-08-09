@@ -423,6 +423,11 @@ store**, and context-specific **flags** (e.g. "Fat oxidation suppressed —
 insulin elevated," "Muscle glycogen replenishment window," "Alcohol present,"
 "Liver glycogen low").
 
+Every flag describes **that moment**, not the week as a whole. The protein-timing
+warning, for example, names the training session it refers to and appears only
+while that session is the one actually driving muscle protein synthesis — so it
+tells you *which* workout was under-fuelled and *when* it mattered.
+
 The **glucose surplus** figure is per-day: it's the glucose absorbed today that
 couldn't be burned or stored as glycogen (i.e. converted to fat via de-novo
 lipogenesis), and it **resets each midnight** — so a carb-heavy day flags a

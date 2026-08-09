@@ -284,11 +284,13 @@
     }
     html += '</div>';
 
+    // Everything shown here is a statement about THIS timestep. The leucine
+    // warning used to be appended separately from simData.leucineMet — a
+    // whole-run verdict — so one missed session showed on all 1,440 steps and
+    // could sit directly beneath the per-step "protein timing is well-matched"
+    // flag. It is now one of d.flags, attributed to the governing session.
     if (d.flags.length) {
       html += '<div class="flags">' + d.flags.map(f => `<div class="flag">⚑ ${f}</div>`).join('') + '</div>';
-    }
-    if (simData.leucineMet === false) {
-      html += `<div class="flag warn">⚑ Leucine threshold: no ≥20 g protein meal within 2 h of resistance training — MPS may be sub-optimal.</div>`;
     }
     $('statusPanel').innerHTML = html;
   }

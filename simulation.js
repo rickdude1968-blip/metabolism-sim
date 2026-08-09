@@ -75,6 +75,13 @@
     const day = Math.floor(absMin / MINS_PER_DAY);
     return 'D' + (day + 1) + ' ' + minToLabel(absMin);
   }
+  // Human label for a training session. Sessions carried in from a previous
+  // block sit at negative absolute minutes, where a "D0" stamp would confuse.
+  function sessionLabel(startMin) {
+    return startMin < 0 ? 'the session carried over from the previous block'
+                        : 'the ' + stampLabel(startMin) + ' session';
+  }
+
   // Is minute `m` inside interval [start,end) allowing midnight wrap.
   function inInterval(m, start, end) {
     if (start === end) return false;
@@ -589,10 +596,10 @@
       let mpsRate = MPS_BASELINE, mpsStatus = 'Baseline';
       // Strongest current stimulus governs (highest elevation factor), decaying
       // with time since each session rather than sitting flat at the peak.
-      let resistFactor = 0, governingLeucine = false;
+      let resistFactor = 0, governingLeucine = false, governingSession = null;
       for (const r of tl.resistances) {
         const f = resistanceMpsFactor(m - (r.start + r.dur));
-        if (f > resistFactor) { resistFactor = f; governingLeucine = !!r.leucine; }
+        if (f > resistFactor) { resistFactor = f; governingLeucine = !!r.leucine; governingSession = r; }
       }
       let aerobicFactor = 0;
       for (const e of tl.aerobics)
@@ -675,9 +682,15 @@
       if (insulin > 2 && muscle < C.MUSCLE_GLYCOGEN_MAX && (gutGlucoseAvail - gutGlucose) > 1)
         flags.push('Muscle glycogen replenishment window — carbs now preferentially refill muscle stores');
       if (resistWindow && governingLeucine) flags.push('Protein timing is well-matched to resistance exercise');
+      // Attributed to the session actually driving this timestep's MPS window.
+      // Previously this was a whole-run verdict rendered on every timestep, so a
+      // single missed session could contradict the "well-matched" flag days later.
+      if (resistWindow && !governingLeucine && governingSession)
+        flags.push('Leucine threshold missed for ' + sessionLabel(governingSession.start) +
+                   ' — no meal with 20 g or more protein within 2 h of it, so MPS is running below its potential');
       if (alcoholActive) flags.push('Alcohol present — fat oxidation significantly suppressed');
       if (liver / C.LIVER_GLYCOGEN_MAX < 0.2) flags.push('Liver glycogen low — approaching fasted metabolic state');
-      if (mpsStatus.startsWith('Suboptimal')) flags.push('Leucine threshold may not be met — consider 20–40 g protein within 2 h of resistance training');
+      if (mpsStatus.startsWith('Suboptimal')) flags.push('MPS is substrate-limited — the amino-acid pool is nearly empty, so protein intake would lift it');
       if (daySurplusGlucose > 150) flags.push('Large glucose surplus today — de novo lipogenesis likely');
       // gluconeogenesis flags (Section 7)
       if (gngRate > 0.08 && insulin < 3) flags.push('GNG active — liver synthesizing glucose from lactate, amino acids, and glycerol');
@@ -720,6 +733,8 @@
     }
 
     out.constants = C;
+    // Run-level summary: true only if EVERY session met the rule. Useful as an
+    // overall verdict; do NOT render it per timestep — that was the old bug.
     out.leucineMet = leucine;
     out.timeline = tl;
     // End-of-run body state + the real trailing events, so another block can
