@@ -1,0 +1,811 @@
+{
+  "schemaVersion": 2,
+  "app": "metabolism-simulator",
+  "name": "post-workout-refill",
+  "created": "2026-08-13T00:00:28.486Z",
+  "profile": {
+    "weight": 93,
+    "height": 183,
+    "age": 57,
+    "sex": "male",
+    "training": "recreational"
+  },
+  "settings": {},
+  "startDate": "2026-08-10",
+  "schedule": [
+    {
+      "day": 1,
+      "type": "sleep",
+      "start": "22:30",
+      "end": "06:30"
+    },
+    {
+      "day": 2,
+      "type": "sleep",
+      "start": "22:30",
+      "end": "06:30"
+    },
+    {
+      "day": 3,
+      "type": "sleep",
+      "start": "22:30",
+      "end": "06:30"
+    },
+    {
+      "day": 4,
+      "type": "sleep",
+      "start": "22:30",
+      "end": "06:30"
+    },
+    {
+      "day": 5,
+      "type": "sleep",
+      "start": "22:30",
+      "end": "06:30"
+    },
+    {
+      "day": 5,
+      "type": "meal",
+      "time": "07:00",
+      "name": "Breakfast",
+      "kcal": 560,
+      "carbs": 68,
+      "protein": 28,
+      "fat": 18,
+      "alcohol": 0
+    },
+    {
+      "type": "resistance",
+      "day": 5,
+      "start": "17:30",
+      "duration": 45,
+      "intensity": "hard"
+    },
+    {
+      "day": 5,
+      "type": "meal",
+      "time": "13:00",
+      "name": "Lunch",
+      "kcal": 740,
+      "carbs": 84,
+      "protein": 44,
+      "fat": 22,
+      "alcohol": 0
+    },
+    {
+      "day": 5,
+      "type": "meal",
+      "time": "18:30",
+      "name": "Dinner",
+      "kcal": 830,
+      "carbs": 96,
+      "protein": 48,
+      "fat": 30,
+      "alcohol": 0
+    },
+    {
+      "day": 1,
+      "type": "meal",
+      "name": "Shake",
+      "time": "12:25",
+      "kcal": 195,
+      "carbs": 8,
+      "protein": 30,
+      "fat": 2.5,
+      "alcohol": 0
+    },
+    {
+      "day": 1,
+      "type": "aerobic",
+      "start": "13:15",
+      "duration": 30,
+      "intensity": "light"
+    },
+    {
+      "day": 1,
+      "type": "resistance",
+      "start": "16:30",
+      "duration": 45,
+      "intensity": "hard"
+    },
+    {
+      "day": 1,
+      "type": "resistance",
+      "start": "17:15",
+      "duration": 20,
+      "intensity": "moderate"
+    },
+    {
+      "day": 1,
+      "type": "meal",
+      "name": "Post Workout",
+      "time": "18:00",
+      "kcal": 240,
+      "carbs": 21,
+      "protein": 32,
+      "fat": 3.5,
+      "alcohol": 0
+    },
+    {
+      "day": 1,
+      "type": "meal",
+      "name": "Dinner",
+      "time": "18:45",
+      "kcal": 470,
+      "carbs": 37,
+      "protein": 63,
+      "fat": 3,
+      "alcohol": 0
+    },
+    {
+      "day": 1,
+      "type": "meal",
+      "name": "Second Dinner",
+      "time": "20:00",
+      "kcal": 414,
+      "carbs": 65,
+      "protein": 9,
+      "fat": 17,
+      "alcohol": 0
+    },
+    {
+      "day": 2,
+      "type": "sleep",
+      "start": "11:30",
+      "end": "12:00"
+    },
+    {
+      "day": 2,
+      "type": "meal",
+      "name": "Breakfast",
+      "time": "09:30",
+      "kcal": 538,
+      "carbs": 38,
+      "protein": 40,
+      "fat": 22.5,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "day": 2,
+      "time": "16:30",
+      "name": "Veil-Beer",
+      "kcal": 240,
+      "protein": 2.6,
+      "carbs": 18,
+      "fat": 0,
+      "alcohol": 22.5
+    },
+    {
+      "type": "meal",
+      "day": 2,
+      "time": "17:15",
+      "name": "Veil-Beer",
+      "kcal": 240,
+      "protein": 2.6,
+      "carbs": 18,
+      "fat": 0,
+      "alcohol": 22.5
+    },
+    {
+      "type": "meal",
+      "day": 2,
+      "time": "18:15",
+      "name": "Veil-Beer",
+      "kcal": 240,
+      "protein": 2.6,
+      "carbs": 18,
+      "fat": 0,
+      "alcohol": 22.5
+    },
+    {
+      "type": "meal",
+      "day": 2,
+      "time": "19:45",
+      "name": "Veil-Beer",
+      "kcal": 240,
+      "protein": 2.6,
+      "carbs": 18,
+      "fat": 0,
+      "alcohol": 22.5
+    },
+    {
+      "type": "meal",
+      "day": 2,
+      "time": "20:00",
+      "name": "Dinner",
+      "kcal": 430,
+      "protein": 53,
+      "carbs": 0,
+      "fat": 24,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "day": 2,
+      "time": "20:00",
+      "name": "Dinner",
+      "kcal": 45,
+      "protein": 1,
+      "carbs": 2,
+      "fat": 4,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "day": 2,
+      "time": "20:00",
+      "name": "Dinner",
+      "kcal": 280,
+      "protein": 2,
+      "carbs": 2,
+      "fat": 29,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "day": 2,
+      "time": "20:15",
+      "name": "Dinner",
+      "kcal": 679,
+      "protein": 46,
+      "carbs": 36,
+      "fat": 38,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "day": 2,
+      "time": "20:15",
+      "name": "Dinner",
+      "kcal": 60,
+      "protein": 0,
+      "carbs": 9,
+      "fat": 3,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "day": 2,
+      "time": "20:15",
+      "name": "Dinner",
+      "kcal": 140,
+      "protein": 0,
+      "carbs": 36,
+      "fat": 0,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "day": 3,
+      "time": "12:30",
+      "name": "Apple",
+      "kcal": 0,
+      "protein": 0,
+      "carbs": 21,
+      "fat": 0,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "day": 3,
+      "time": "12:30",
+      "name": "Peanut Butter",
+      "kcal": 0,
+      "protein": 12,
+      "carbs": 11,
+      "fat": 24,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "day": 3,
+      "time": "12:30",
+      "name": "Shake",
+      "kcal": 195,
+      "protein": 30,
+      "carbs": 8,
+      "fat": 2.5,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "day": 3,
+      "time": "18:15",
+      "name": "Snack",
+      "kcal": 430,
+      "protein": 0,
+      "carbs": 8,
+      "fat": 0,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "day": 3,
+      "time": "20:00",
+      "name": "Snack",
+      "kcal": 45,
+      "protein": 0,
+      "carbs": 7,
+      "fat": 0,
+      "alcohol": 0
+    },
+    {
+      "type": "aerobic",
+      "day": 3,
+      "start": "14:40",
+      "duration": 20,
+      "intensity": "light"
+    },
+    {
+      "type": "resistance",
+      "day": 3,
+      "start": "17:15",
+      "duration": 15,
+      "intensity": "moderate"
+    },
+    {
+      "day": 3,
+      "type": "resistance",
+      "start": "17:30",
+      "duration": 35,
+      "intensity": "hard"
+    },
+    {
+      "day": 3,
+      "type": "meal",
+      "name": "Shake",
+      "time": "18:45",
+      "kcal": 195,
+      "carbs": 8,
+      "protein": 30,
+      "fat": 2.5,
+      "alcohol": 0
+    },
+    {
+      "day": 3,
+      "type": "meal",
+      "name": "Dinner",
+      "time": "19:00",
+      "kcal": 633,
+      "carbs": 41,
+      "protein": 53,
+      "fat": 28,
+      "alcohol": 0
+    }
+  ],
+  "endState": {
+    "liver": 12.595261073826785,
+    "muscle": 151.186920186916,
+    "aminoPool": 28.90316326564546,
+    "insulin": 1.7580272504884953,
+    "alcoholInSystem": 0,
+    "fatStored_g": 28562.244473107203
+  },
+  "carryInEvents": [
+    {
+      "type": "meal",
+      "minutesBefore": 1020,
+      "name": "Breakfast",
+      "kcal": 560,
+      "carbs": 68,
+      "protein": 28,
+      "fat": 18,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 660,
+      "name": "Lunch",
+      "kcal": 740,
+      "carbs": 84,
+      "protein": 44,
+      "fat": 22,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 330,
+      "name": "Dinner",
+      "kcal": 830,
+      "carbs": 96,
+      "protein": 48,
+      "fat": 30,
+      "alcohol": 0
+    },
+    {
+      "type": "resistance",
+      "minutesBefore": 390,
+      "duration": 45,
+      "intensity": "hard"
+    },
+    {
+      "type": "sleep",
+      "minutesBefore": 90,
+      "duration": 480
+    }
+  ],
+  "startedFrom": {
+    "liver": 18.387407156362496,
+    "muscle": 255.96554996372782,
+    "aminoPool": 29.857588203064598,
+    "insulin": 4.298207208063448,
+    "alcoholInSystem": 0,
+    "fatStored_g": 28861.88247607416
+  },
+  "startedFromCarryIn": [
+    {
+      "type": "meal",
+      "minutesBefore": 2640,
+      "name": "Veil-Beer",
+      "kcal": 240,
+      "carbs": 18,
+      "protein": 2.6,
+      "fat": 0,
+      "alcohol": 22.5
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 2610,
+      "name": "Veil-Beer",
+      "kcal": 240,
+      "carbs": 18,
+      "protein": 2.6,
+      "fat": 0,
+      "alcohol": 22.5
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 2490,
+      "name": "Tortilla",
+      "kcal": 70,
+      "carbs": 2,
+      "protein": 6,
+      "fat": 3.5,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 2490,
+      "name": "Beets",
+      "kcal": 58,
+      "carbs": 9.1,
+      "protein": 2.2,
+      "fat": 0.2,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 2490,
+      "name": "Squash",
+      "kcal": 158,
+      "carbs": 21,
+      "protein": 2,
+      "fat": 9,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 2490,
+      "name": "Chicken",
+      "kcal": 294,
+      "carbs": 0,
+      "protein": 52.6,
+      "fat": 7.7,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 2490,
+      "name": "Swiss Cheese",
+      "kcal": 165,
+      "carbs": 0.6,
+      "protein": 11.3,
+      "fat": 13,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 2490,
+      "name": "Olives",
+      "kcal": 0,
+      "carbs": 0,
+      "protein": 0,
+      "fat": 0,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 2490,
+      "name": "Peach",
+      "kcal": 59,
+      "carbs": 11.7,
+      "protein": 1.4,
+      "fat": 0.4,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 2490,
+      "name": "Olive Oil",
+      "kcal": 180,
+      "carbs": 0,
+      "protein": 0,
+      "fat": 20,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 2340,
+      "name": "Beer",
+      "kcal": 305,
+      "carbs": 23.6,
+      "protein": 2.8,
+      "fat": 0,
+      "alcohol": 29
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 2340,
+      "name": "Olives",
+      "kcal": 233,
+      "carbs": 0.8,
+      "protein": 1.7,
+      "fat": 24.6,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 2205,
+      "name": "Veil-Beer",
+      "kcal": 240,
+      "carbs": 18,
+      "protein": 2.6,
+      "fat": 0,
+      "alcohol": 22.5
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 2170,
+      "name": "Veil-Beer",
+      "kcal": 240,
+      "carbs": 18,
+      "protein": 2.6,
+      "fat": 0,
+      "alcohol": 22.5
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 2170,
+      "name": "Chicken",
+      "kcal": 380,
+      "carbs": 2,
+      "protein": 50,
+      "fat": 12,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 2170,
+      "name": "Mex Rice",
+      "kcal": 280,
+      "carbs": 46,
+      "protein": 6.2,
+      "fat": 6,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 2170,
+      "name": "Beans",
+      "kcal": 255,
+      "carbs": 26.2,
+      "protein": 16.2,
+      "fat": 2,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 2170,
+      "name": "Dressing",
+      "kcal": 112,
+      "carbs": 1,
+      "protein": 0.5,
+      "fat": 12,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 2170,
+      "name": "Salsa",
+      "kcal": 20,
+      "carbs": 2,
+      "protein": 0,
+      "fat": 0,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 2130,
+      "name": "Veil-Beer",
+      "kcal": 240,
+      "carbs": 18,
+      "protein": 2.6,
+      "fat": 0,
+      "alcohol": 22.5
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 1755,
+      "name": "Dinner",
+      "kcal": 50,
+      "carbs": 10,
+      "protein": 1,
+      "fat": 0.2,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 760,
+      "name": "Shake",
+      "kcal": 195,
+      "carbs": 8,
+      "protein": 30,
+      "fat": 18,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 415,
+      "name": "Snack",
+      "kcal": 270,
+      "carbs": 21,
+      "protein": 8,
+      "fat": 16,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 350,
+      "name": "Snack",
+      "kcal": 65,
+      "carbs": 14,
+      "protein": 1,
+      "fat": 0,
+      "alcohol": 0.7
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 315,
+      "name": "Dinner",
+      "kcal": 570,
+      "carbs": 8,
+      "protein": 62,
+      "fat": 34,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 315,
+      "name": "Dinner",
+      "kcal": 23,
+      "carbs": 5,
+      "protein": 1,
+      "fat": 0.2,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 315,
+      "name": "Dinner",
+      "kcal": 12,
+      "carbs": 2.7,
+      "protein": 0.5,
+      "fat": 0.1,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 315,
+      "name": "Dinner",
+      "kcal": 81,
+      "carbs": 21,
+      "protein": 1,
+      "fat": 0.5,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 315,
+      "name": "Dinner",
+      "kcal": 65,
+      "carbs": 17,
+      "protein": 0,
+      "fat": 0,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 315,
+      "name": "Dinner",
+      "kcal": 50,
+      "carbs": 12,
+      "protein": 1,
+      "fat": 0,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 180,
+      "name": "Bed Snack",
+      "kcal": 45,
+      "carbs": 9,
+      "protein": 3,
+      "fat": 0,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 180,
+      "name": "Bed Snack",
+      "kcal": 143,
+      "carbs": 3.6,
+      "protein": 9,
+      "fat": 10.7,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 180,
+      "name": "Bed Snack",
+      "kcal": 82,
+      "carbs": 17.3,
+      "protein": 2.8,
+      "fat": 0.4,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 180,
+      "name": "Bed Snack",
+      "kcal": 165,
+      "carbs": 0.6,
+      "protein": 11.3,
+      "fat": 13,
+      "alcohol": 0
+    },
+    {
+      "type": "meal",
+      "minutesBefore": 180,
+      "name": "Bed Snack",
+      "kcal": 70,
+      "carbs": 0,
+      "protein": 8,
+      "fat": 4,
+      "alcohol": 0
+    },
+    {
+      "type": "aerobic",
+      "minutesBefore": 460,
+      "duration": 30,
+      "intensity": "moderate"
+    },
+    {
+      "type": "resistance",
+      "minutesBefore": 840,
+      "duration": 30,
+      "intensity": "moderate"
+    },
+    {
+      "type": "resistance",
+      "minutesBefore": 810,
+      "duration": 30,
+      "intensity": "hard"
+    },
+    {
+      "type": "sleep",
+      "minutesBefore": 90,
+      "duration": 480
+    }
+  ]
+}

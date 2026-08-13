@@ -202,6 +202,115 @@
 
   document.getElementById('out').innerHTML = html;
 
+  // =======================================================================
+  //  Post-workout muscle glycogen resynthesis
+  // =======================================================================
+  // WHAT THIS GUARDS, AND WHY IT EXISTS
+  //
+  // A user reported post-exercise refill looking far too slow: muscle glycogen
+  // rose only ~17 g over the 5.5 h after a hard session with 64 g of carbs.
+  // A per-timestep disposition log showed the original diagnosis ("storage is
+  // blocked, glucose is being diverted to fat") was wrong — lipogenesis was
+  // exactly 0 g and the refill cap never bound. What was actually true:
+  //
+  //   (a) A real but SMALL insulin-gate effect. Muscle refill required
+  //       insulin > 2, which stranded ~4 g across the steps where the gate
+  //       was shut. Worth fixing, but nowhere near the reported shortfall.
+  //   (b) Missing storage-over-oxidation bias. Insulin suppresses fat
+  //       oxidation, so post-meal the model burned ~66% of absorbed carbs
+  //       rather than storing them. Depleted muscle activates glycogen
+  //       synthase, which the model did not represent.
+  //   (c) A test case too small to be diagnostic. At 64 g against ~480 kcal
+  //       of evening demand the window is SUBSTRATE-limited: only ~21 g was
+  //       ever surplus, so it cannot distinguish "storage works" from
+  //       "there was nothing to store". Hence the second, high-carb fixture.
+  //
+  // The fixes were: contraction-mediated (insulin-independent) uptake for 2 h
+  // post-exercise scaled by the session's measured glycogen cost, and a 3 h
+  // storage-over-oxidation bias bounded by the fat-oxidation ceiling.
+  //
+  // If a future change re-gates refill on insulin alone, or drops the storage
+  // bias, the baseline fixture drops back toward +17 g and this goes red.
+  // The high-carb fixture additionally guards the storage PATHWAY at a dose
+  // where storage, not substrate supply, is the binding constraint.
+  // =======================================================================
+  const PW = [
+    { file: 'post-workout-refill.json',         label: 'baseline (64 g post-workout carbs)',  expect: 31.96 },
+    { file: 'post-workout-refill-highcarb.json', label: 'high carb (124 g post-workout carbs)', expect: 67.46 }
+  ];
+  const PW_TOL = 3;            // grams — lets legitimate tuning move without failing
+  const PW_MASS_TOL = 1;       // grams — mass conservation across the window
+
+  function pwMeasure(scn) {
+    const sd = window.runSimulation(scn.profile, scn.schedule, scn.startedFrom, scn.startedFromCarryIn);
+    const at = (d, h, m) => (d - 1) * STEPS_PER_DAY + Math.round((h * 60 + m) / 5);
+    const a = at(3, 18, 5), b = at(3, 23, 30);        // D3 session ends 18:05
+    let absorbed = 0, oxidized = 0, toMuscle = 0, toLiver = 0, toFat = 0;
+    for (let i = a; i <= b; i++) {
+      const d = sd[i];
+      absorbed += d.carbAbsorbedG; oxidized += d.carbOxidizedG;
+      toMuscle += d.refillMuscle;  toLiver  += d.refillLiver;  toFat += d.lipogenesis;
+    }
+    return { gain: sd[b].muscleGlycogen - sd[a].muscleGlycogen,
+             start: sd[a].muscleGlycogen, end: sd[b].muscleGlycogen,
+             absorbed, oxidized, toMuscle, toLiver, toFat,
+             massErr: Math.abs(absorbed - (oxidized + toMuscle + toLiver + toFat)) };
+  }
+
+  Promise.all(PW.map(t =>
+    fetch('../test-scenarios/' + t.file).then(r => {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(scn => ({ t, m: pwMeasure(scn) }))
+      .catch(e => ({ t, err: e.message }))
+  )).then(results => {
+    let h = '<h2>Post-workout muscle glycogen resynthesis</h2>';
+    const skipped = results.some(r => r.err);
+    if (skipped) {
+      h += '<div class="verdict bad">Could not load the fixtures (' +
+           results.filter(r => r.err).map(r => r.t.file + ': ' + r.err).join('; ') +
+           ').<br />These checks need the page served over HTTP — a <code>file://</code> open cannot fetch them. ' +
+           'Run <code>python -m http.server</code> from the app folder and reload.</div>';
+      document.getElementById('out').insertAdjacentHTML('beforeend', h);
+      window.__results.postWorkout = { skipped: true };
+      return;
+    }
+    const rows = results.map(({ t, m }) => {
+      const gainOk = Math.abs(m.gain - t.expect) <= PW_TOL;
+      const massOk = m.massErr <= PW_MASS_TOL;
+      return { label: t.label, expect: t.expect, gain: m.gain, gainOk, massErr: m.massErr, massOk, m };
+    });
+    const allOk = rows.every(r => r.gainOk && r.massOk);
+    // the high-carb dose must actually store more, or the fixture pair is pointless
+    const monotonic = rows[1].gain > rows[0].gain + 5;
+
+    h += '<div class="verdict ' + (allOk && monotonic ? 'ok' : 'bad') + '">' +
+      (allOk && monotonic
+        ? '✓ Post-workout refill within tolerance on both doses, mass conserved, and the higher dose stores more.'
+        : '✗ Post-workout refill check FAILED — see the table.') + '</div>';
+    h += '<table><tr><th>Fixture</th><th>Muscle gain (g)</th><th>Expected ±' + PW_TOL +
+         '</th><th>Absorbed</th><th>Oxidized</th><th>→Muscle</th><th>→Liver</th><th>→Fat</th>' +
+         '<th>Mass err</th><th>Result</th></tr>';
+    for (const r of rows) {
+      const ok = r.gainOk && r.massOk;
+      h += '<tr><td>' + r.label + '</td>' +
+        '<td class="num">' + r.gain.toFixed(2) + '</td><td class="num info">' + r.expect.toFixed(2) + '</td>' +
+        '<td class="num">' + r.m.absorbed.toFixed(1) + '</td><td class="num">' + r.m.oxidized.toFixed(1) + '</td>' +
+        '<td class="num">' + r.m.toMuscle.toFixed(1) + '</td><td class="num">' + r.m.toLiver.toFixed(1) + '</td>' +
+        '<td class="num">' + r.m.toFat.toFixed(1) + '</td>' +
+        '<td class="num">' + r.massErr.toFixed(4) + '</td>' +
+        '<td class="' + (ok ? 'pass' : 'fail') + '">' + (ok ? 'PASS' : 'FAIL') + '</td></tr>';
+    }
+    h += '</table>';
+    if (!monotonic) h += '<p class="sub"><b>Dose response failed:</b> the 124 g fixture did not store meaningfully more than the 64 g one.</p>';
+    document.getElementById('out').insertAdjacentHTML('beforeend', h);
+
+    window.__results.postWorkout = { pass: allOk && monotonic, monotonic, rows: rows.map(r =>
+      ({ label: r.label, gain: +r.gain.toFixed(2), expect: r.expect, gainOk: r.gainOk,
+         massErr: +r.massErr.toFixed(4), massOk: r.massOk })) };
+    window.__results.pass = window.__results.pass && allOk && monotonic;
+  });
+
   window.__results = {
     pass: failures.length === 0,
     tolerance: TOL,

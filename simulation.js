@@ -155,6 +155,35 @@
     return grams * x * Math.exp(-x) / peak;
   }
 
+  // ---- post-exercise muscle glucose uptake (Richter & Hargreaves 2013) ----
+  // Contractions translocate GLUT4 to the membrane, where it stays for ~2 h, so
+  // muscle takes up glucose WITHOUT insulin; for the rest of the day the muscle
+  // stays insulin-sensitised. The effect scales with how much glycogen the
+  // session actually cost, since it is glycogen depletion that drives it.
+  const REFILL_BASE_G_PER_MIN = 0.5;      // ordinary, insulin-driven uptake
+  const REFILL_INSULIN_BASE = 2;          // ordinary insulin gate
+  const PE_IMMEDIATE_MIN = 120;           // 0-2 h: insulin-independent
+  const PE_SENSITISED_MIN = 24 * 60;      // 2-24 h: enhanced insulin sensitivity
+  const PE_IMMEDIATE_CAP = 0.8, PE_SENSITISED_CAP = 0.6;
+  const PE_SENSITISED_INSULIN = 1.0;
+  const PE_COST_FULL = 60, PE_COST_HALF = 20;   // grams of glycogen burned
+  // Storage-over-oxidation bias (Prats et al. 2011): for 3 h after a depleting
+  // session, low glycogen activates glycogen synthase, so absorbed glucose is
+  // routed to storage in preference to being burned.
+  const STORAGE_BIAS_MIN = 180, STORAGE_BIAS_FRACTION = 0.50, STORAGE_BIAS_BELOW = 0.70;
+
+  // How much glycogen a session costs, for sessions that ran BEFORE this block
+  // began (in-block sessions accumulate their real measured draw instead).
+  function estimateGlycogenCost(C, met, durMin, fatFrac) {
+    return C.BMR_PER_MIN * met * durMin * (1 - fatFrac) / KCAL_CARB;
+  }
+  // full effect above PE_COST_FULL, half between, none below PE_COST_HALF
+  function costScale(cost) {
+    if (cost >= PE_COST_FULL) return 1;
+    if (cost >= PE_COST_HALF) return 0.5;
+    return 0;
+  }
+
   // ---- activity timeline (Sections 3C/3D) --------------------------------
   const AEROBIC_MET = { light: 3.5, moderate: 6.0, vigorous: 10.0 };
   const RESIST_MET = { light: 3.0, moderate: 5.0, hard: 6.5 };
@@ -203,10 +232,12 @@
         fat: +ev.fat || 0, alcohol: +ev.alcohol || 0, name: ev.name || 'Meal'
       });
       else if (ev.type === 'aerobic') aerobics.push({
-        start: at, dur: +ev.duration || 0, intensity: ev.intensity, day: 0, carryIn: true
+        start: at, dur: +ev.duration || 0, intensity: ev.intensity, day: 0, carryIn: true,
+        carriedCost: isFinite(+ev.glycogenCost) ? +ev.glycogenCost : null
       });
       else if (ev.type === 'resistance') resistances.push({
-        start: at, dur: +ev.duration || 0, intensity: ev.intensity, day: 0, carryIn: true
+        start: at, dur: +ev.duration || 0, intensity: ev.intensity, day: 0, carryIn: true,
+        carriedCost: isFinite(+ev.glycogenCost) ? +ev.glycogenCost : null
       });
       else if (ev.type === 'sleep') sleeps.push({
         start: at, end: at + (+ev.duration || 0), day: 0, carryIn: true
@@ -261,11 +292,16 @@
       type: 'meal', minutesBefore: boundaryMin - m.min, name: m.name,
       kcal: m.kcal, carbs: m.carbs, protein: m.protein, fat: m.fat, alcohol: m.alcohol
     });
+    // glycogenCost travels with the session: the next block scales its
+    // post-exercise uptake window by it, and re-deriving it from duration and
+    // intensity would not match what the session actually cost.
     for (const e of tl.aerobics) if (near(e.start)) out.push({
-      type: 'aerobic', minutesBefore: boundaryMin - e.start, duration: e.dur, intensity: e.intensity
+      type: 'aerobic', minutesBefore: boundaryMin - e.start, duration: e.dur, intensity: e.intensity,
+      glycogenCost: e.glycogenCost
     });
     for (const e of tl.resistances) if (near(e.start)) out.push({
-      type: 'resistance', minutesBefore: boundaryMin - e.start, duration: e.dur, intensity: e.intensity
+      type: 'resistance', minutesBefore: boundaryMin - e.start, duration: e.dur, intensity: e.intensity,
+      glycogenCost: e.glycogenCost
     });
     // Only a sleep still in progress at the boundary matters (the sleeper wakes
     // up inside the next block); earlier sleeps can't affect any future step.
@@ -368,6 +404,18 @@
     // null = no resistance training; true = every session well-timed; false = one or more missed.
     const realRes = tl.resistances.filter(r => r.start >= 0 && r.start < tl.totalMin);
     const leucine = realRes.length ? realRes.every(r => r.leucine) : null;
+
+    // Sessions inside this block accumulate their real measured glycogen draw as
+    // the loop runs; sessions carried in from a previous block are estimated,
+    // since their actual cost was paid in a run we no longer have.
+    for (const r of tl.resistances)
+      r.glycogenCost = r.start >= 0 ? 0
+        : (r.carriedCost != null ? r.carriedCost
+                                 : estimateGlycogenCost(C, RESIST_MET[r.intensity], r.dur, 0.10));
+    for (const e of tl.aerobics)
+      e.glycogenCost = e.start >= 0 ? 0
+        : (e.carriedCost != null ? e.carriedCost
+                                 : estimateGlycogenCost(C, AEROBIC_MET[e.intensity], e.dur, AEROBIC_FATFRAC[e.intensity]));
 
     const IS = initialState || null;
     const pick = (v, dflt) => (typeof v === 'number' && isFinite(v)) ? v : dflt;
@@ -505,6 +553,33 @@
         if (fatFrac > alcoholFatCeiling) { fatFrac = alcoholFatCeiling; carbFrac = 1 - fatFrac; }
       }
 
+      // ---- post-exercise uptake window (Step 2) -----------------------
+      // Pick the most favourable window across all sessions. `scale` blends
+      // between ordinary uptake and the enhanced state, so a session that cost
+      // 20-60 g gets half the benefit rather than all or nothing.
+      let peCap = REFILL_BASE_G_PER_MIN, peInsulinMin = REFILL_INSULIN_BASE, peScale = 0, peBias = false;
+      const considerSession = (endMin, cost) => {
+        const dt = m - endMin;
+        if (dt < 0) return;
+        const scale = costScale(cost);
+        if (scale === 0) return;
+        if (dt <= PE_SENSITISED_MIN) {
+          const inImmediate = dt <= PE_IMMEDIATE_MIN;
+          const cap = inImmediate ? PE_IMMEDIATE_CAP : PE_SENSITISED_CAP;
+          const ins = inImmediate ? 0 : PE_SENSITISED_INSULIN;
+          // blend from the ordinary values by `scale`
+          const capEff = REFILL_BASE_G_PER_MIN + scale * (cap - REFILL_BASE_G_PER_MIN);
+          const insEff = REFILL_INSULIN_BASE - scale * (REFILL_INSULIN_BASE - ins);
+          if (capEff > peCap) { peCap = capEff; peInsulinMin = insEff; peScale = scale; }
+        }
+        // storage bias applies only in the first 3 h, and only after a session
+        // that actually depleted glycogen
+        if (dt <= STORAGE_BIAS_MIN && cost >= PE_COST_HALF) peBias = true;
+      };
+      for (const r of tl.resistances) considerSession(r.start + r.dur, r.glycogenCost);
+      for (const e of tl.aerobics)
+        if (e.intensity === 'vigorous') considerSession(e.start + e.dur, e.glycogenCost);
+
       // ---- fat energy (computed first — the glycerol GNG stream needs it) ---
       let fatDemand = remainingDemand * fatFrac;
       const gutFatAvail = aFat * TIMESTEP * KCAL_FAT;
@@ -542,6 +617,25 @@
       let gutGlucose = Math.min(gutGlucoseAvail, carbDemand);
       carbDemand -= gutGlucose;
 
+      // ---- storage-over-oxidation bias (Step 3) ------------------------
+      // Depleted muscle activates glycogen synthase, so glucose that would have
+      // been burned is stored instead and fat covers the energy gap. The
+      // back-fill is bounded by the fat-oxidation ceiling, so this can never
+      // manufacture energy the body could not actually supply.
+      let storageBiasDiverted = 0;
+      if (peBias && muscle < STORAGE_BIAS_BELOW * C.MUSCLE_GLYCOGEN_MAX && gutGlucose > 0) {
+        const wanted = gutGlucose * STORAGE_BIAS_FRACTION;
+        const fatHeadroom = Math.max(0, maxFatOx - adipose);
+        const shifted = Math.min(wanted, fatHeadroom);
+        if (shifted > 0) {
+          gutGlucose -= shifted;          // spared from oxidation...
+          adipose += shifted;             // ...and fat burns instead.
+          // carbDemand is deliberately left alone: that slice of demand is now
+          // met by fat, so glycogen must not be drawn to cover it as well.
+          storageBiasDiverted = shifted / KCAL_CARB;   // grams freed to store
+        }
+      }
+
       // When insulin is low (fasting / exercise), GNG feeds blood glucose IN
       // PARALLEL with glycogenolysis (~a fifth-to-a-third of hepatic output), so
       // it appears as its own fuel band instead of hiding inside liver glycogen.
@@ -565,6 +659,13 @@
       };
       if (exercising) { muscleKcal = drawMuscle(); liverKcal = drawLiver(); }
       else { liverKcal = drawLiver(); muscleKcal = drawMuscle(); }
+      // Charge this step's muscle glycogen draw to whichever session is running,
+      // so the post-exercise window can scale by what the session really cost.
+      if (exercising && muscleKcal > 0) {
+        const drawnG = muscleKcal / KCAL_CARB;
+        for (const r of tl.resistances) if (m >= r.start && m < r.start + r.dur) r.glycogenCost += drawnG;
+        for (const e of tl.aerobics)    if (m >= e.start && m < e.start + e.dur) e.glycogenCost += drawnG;
+      }
 
       // Any GNG glucose not used for fuel replenishes LIVER glycogen (never
       // muscle — GNG exports via blood; muscle refills only via GLUT4 uptake).
@@ -575,16 +676,27 @@
       }
 
       // ---- 3D step 4. surplus handling -------------------------------
+      // Every gram of absorbed glucose that was not oxidized ends up in exactly
+      // one of these three buckets; they are recorded per step so the
+      // disposition can be audited (absorbed = oxidized + muscle + liver + fat).
+      let refillMuscle = 0, refillLiver = 0, lipogenesis = 0;
+      // Gate and cap both relax after contractions (Step 2).
+      const muscleGateOpen = insulin > peInsulinMin;
+      const refillCapStep = peCap * TIMESTEP;
       let surplusGlucose = (gutGlucoseAvail - gutGlucose) / KCAL_CARB;
-      if (surplusGlucose > 0 && muscle < C.MUSCLE_GLYCOGEN_MAX && insulin > 2) {
-        let refill = Math.min(surplusGlucose, C.MUSCLE_GLYCOGEN_MAX - muscle, MUSCLE_REFILL_MAX);
-        muscle += refill; surplusGlucose -= refill;
+      if (surplusGlucose > 0 && muscle < C.MUSCLE_GLYCOGEN_MAX && muscleGateOpen) {
+        refillMuscle = Math.min(surplusGlucose, C.MUSCLE_GLYCOGEN_MAX - muscle, refillCapStep);
+        muscle += refillMuscle; surplusGlucose -= refillMuscle;
       }
       if (surplusGlucose > 0 && liver < C.LIVER_GLYCOGEN_MAX) {
-        let refill = Math.min(surplusGlucose, C.LIVER_GLYCOGEN_MAX - liver);
-        liver += refill; surplusGlucose -= refill;
+        refillLiver = Math.min(surplusGlucose, C.LIVER_GLYCOGEN_MAX - liver);
+        liver += refillLiver; surplusGlucose -= refillLiver;
       }
-      if (surplusGlucose > 0) { cumSurplusGlucose += surplusGlucose; daySurplusGlucose += surplusGlucose; fatStored_g += surplusGlucose * 0.5; }
+      if (surplusGlucose > 0) {
+        lipogenesis = surplusGlucose;
+        cumSurplusGlucose += surplusGlucose; daySurplusGlucose += surplusGlucose;
+        fatStored_g += surplusGlucose * 0.5;
+      }
       const surplusFat_g = fatDemand < 0 ? 0 : (gutFatAvail - gutFat) / KCAL_FAT;
       if (surplusFat_g > 0) fatStored_g += surplusFat_g;
       // Body-fat reserve is DEBITED by adipose fat oxidized this step, so the
@@ -713,6 +825,12 @@
         fatFracAdjusted: fatFrac,
         mpsRate, mpsStatus,
         gngRate, gngKcal, gngRefill, hoursFasted,
+        // glucose disposition this step (grams) — for auditing where
+        // absorbed carbohydrate actually went
+        carbAbsorbedG: aCarb * TIMESTEP,
+        carbOxidizedG: gutGlucose / KCAL_CARB,
+        refillMuscle, refillLiver, lipogenesis, muscleGateOpen,
+        peScale, peCapGPerMin: peCap, peInsulinMin, storageBiasActive: peBias, storageBiasDiverted,
         gngPrecursors: { lactate: lactateGng, alanine: alanineGng, glycerol: glycerolGng },
         // `alcoholInSystem` is the true END-of-step state, consistent with every
         // other state variable here — scenario chaining seeds from these, so it
