@@ -551,6 +551,104 @@
              meta: { source: 'Cronometer', kind: 'timing', hasTimeColumn: true } };
   }
 
+  // ---- distribution across item times -----------------------------------
+  // The nutrition file knows a group's totals; the servings file knows when
+  // each item inside that group was logged. Collapsing the group to a single
+  // timestamp is fine for food — the model cares about the load, not which
+  // forkful arrived when — but it is wrong for alcohol, where the whole
+  // point of the BAC curve is that drinks arrive spread out. Three beers
+  // over two hours booked as one 48 g dose overstates the peak and greatly
+  // overstates the time spent above any threshold.
+  const DISTRIBUTE_MIN_SPAN_MIN = 30;    // an alcohol group longer than this
+  const DISTRIBUTE_HINT_SPAN_MIN = 90;   // any group longer than this gets a nudge
+
+  function spanMinutes(items) {
+    const ts = (items || []).map(i => i.time).filter(Boolean).sort();
+    if (ts.length < 2) return 0;
+    return hhmm(ts[ts.length - 1]) - hhmm(ts[0]);
+  }
+
+  // Suggest only — the review screen always lets the user decide. The rule is
+  // deliberately narrow: distributing food would multiply events for no
+  // physiological gain, so it defaults on ONLY where it changes the answer.
+  function suggestDistribution(alcohol_g, items) {
+    const span = spanMinutes(items);
+    const n = (items || []).length;
+    if ((+alcohol_g || 0) > 0 && n >= 2 && span > DISTRIBUTE_MIN_SPAN_MIN) {
+      return { mode: 'distributed', span: span, hint: null };
+    }
+    if (n >= 2 && span > DISTRIBUTE_HINT_SPAN_MIN) {
+      return { mode: 'merged', span: span,
+               hint: 'These items span ' + fmtSpan(span) + ' — longer than a single sitting. ' +
+                     'Distributing them may describe the day better.' };
+    }
+    return { mode: 'merged', span: span, hint: null };
+  }
+  function fmtSpan(min) {
+    const h = Math.floor(min / 60), m = min % 60;
+    return (h ? h + ' h' + (m ? ' ' + m + ' min' : '') : m + ' min');
+  }
+
+  // Even split whose parts sum EXACTLY back to the total. Every part but the
+  // last is the rounded share; the last absorbs the remainder. Without this,
+  // 48.5 g of alcohol over 4 drinks silently becomes 48.52 g.
+  function splitEvenly(total, n) {
+    const t = round2(total);
+    if (n <= 1) return [t];
+    const each = round2(t / n);
+    const out = [];
+    let acc = 0;
+    for (let i = 0; i < n - 1; i++) { out.push(each); acc = round2(acc + each); }
+    out.push(round2(t - acc));
+    return out;
+  }
+
+  /**
+   * expandDistributed(entries, modes) -> entries
+   *
+   * Replaces each group marked "distributed" with one entry per servings
+   * item, at that item's own time, carrying an equal share of the group's
+   * nutrition. `modes` is { groupKey: 'merged' | 'distributed' }; anything
+   * absent falls back to the entry's own suggestedMode.
+   *
+   * Splitting evenly is an assumption, not a measurement — the nutrition
+   * file simply does not say how the group's macros divide among its items.
+   * The review screen says so, and every resulting event stays editable.
+   */
+  function expandDistributed(entries, modes) {
+    const out = [];
+    for (const e of (entries || [])) {
+      const mode = (modes && Object.prototype.hasOwnProperty.call(modes, e.groupKey))
+        ? modes[e.groupKey] : e.suggestedMode;
+      const items = e.items || [];
+      if (mode !== 'distributed' || items.length < 2) { out.push(e); continue; }
+
+      const n = items.length;
+      const parts = {
+        kcal: splitEvenly(e.kcal, n), carbs_g: splitEvenly(e.carbs_g, n),
+        protein_g: splitEvenly(e.protein_g, n), fat_g: splitEvenly(e.fat_g, n),
+        alcohol_g: splitEvenly(e.alcohol_g || 0, n)
+      };
+      // An item whose Time cell did not parse still gets an event — it
+      // inherits the group's earliest known time rather than vanishing.
+      const fallback = e.time || (items.filter(i => i.time)[0] || {}).time || null;
+      items.forEach((it, i) => {
+        out.push({
+          kind: 'food', date: e.date, time: it.time || fallback, mealSlot: e.mealSlot,
+          name: e.groupLabel + ' — ' + (it.name || 'item ' + (i + 1)),
+          amount: '',
+          kcal: parts.kcal[i], carbs_g: parts.carbs_g[i], protein_g: parts.protein_g[i],
+          fat_g: parts.fat_g[i], alcohol_g: parts.alcohol_g[i],
+          foods: it.name ? [it.name] : [],
+          groupKey: e.groupKey, groupLabel: e.groupLabel, items: [],
+          distributed: true, distIndex: i, distCount: n,
+          span: e.span, suggestedMode: e.suggestedMode
+        });
+      });
+    }
+    return out;
+  }
+
   /**
    * joinNutritionAndTiming(nutritionResult, timingResult) -> parser-shaped
    * result, so everything downstream treats it like any other import.
@@ -569,26 +667,51 @@
     const tim = (timingResult && timingResult.entries) || [];
     const entries = [], warnings = [], unresolvedDays = [];
 
-    // date -> groupKey -> { label, earliest, foods }
+    // date -> groupKey -> { label, earliest, foods, items }
+    // `items` keeps each serving row's own name AND time, which is what makes
+    // distribution possible later: the nutrition side only ever knows the
+    // group, so the per-item clock times exist nowhere else.
     const idx = {};
     for (const t of tim) {
       const d = idx[t.date] || (idx[t.date] = {});
       const key = String(t.group || '').trim().toLowerCase();
-      const g = d[key] || (d[key] = { label: String(t.group || '').trim(), earliest: null, foods: [] });
+      const g = d[key] || (d[key] = { label: String(t.group || '').trim(), earliest: null,
+                                      foods: [], items: [] });
       if (t.name) g.foods.push(t.name);
+      g.items.push({ name: t.name || '', time: t.time || null });
       if (t.time && (!g.earliest || t.time < g.earliest)) g.earliest = t.time;
     }
+    // Chronological, so a distributed group comes out in the order it was
+    // drunk/eaten rather than the order the CSV happened to list.
+    Object.keys(idx).forEach(d => Object.keys(idx[d]).forEach(k => {
+      idx[d][k].items.sort((a, b) => hhmm(a.time || '99:99') - hhmm(b.time || '99:99'));
+    }));
 
     const hasGroupRows = {};
     for (const n of nut) if (String(n.group || '').trim()) hasGroupRows[n.date] = true;
 
-    const used = {}, totalNoted = {};
-    const mk = (date, time, group, name, n, foods) => ({
-      kind: 'food', date: date, time: time || null, mealSlot: group || null,
-      name: name || 'Meal', amount: '',
-      kcal: n.kcal, carbs_g: n.carbs_g, protein_g: n.protein_g, fat_g: n.fat_g,
-      alcohol_g: n.alcohol_g, foods: foods || []
-    });
+    const used = {}, totalNoted = {}, groups = [];
+    const mk = (date, time, group, name, n, foods, items) => {
+      const its = items || [];
+      const sug = suggestDistribution(n.alcohol_g, its);
+      const key = date + '|' + String(group || '').trim().toLowerCase();
+      const e = {
+        kind: 'food', date: date, time: time || null, mealSlot: group || null,
+        name: name || 'Meal', amount: '',
+        kcal: n.kcal, carbs_g: n.carbs_g, protein_g: n.protein_g, fat_g: n.fat_g,
+        alcohol_g: n.alcohol_g, foods: foods || [],
+        // Carried so the review screen can offer, and expandDistributed can
+        // act on, a per-group choice that neither file states on its own.
+        groupKey: key, groupLabel: String(group || '').trim() || (name || 'Meal'),
+        items: its, span: sug.span, suggestedMode: sug.mode, distHint: sug.hint || null
+      };
+      if (its.length >= 2) {
+        groups.push({ key: key, date: date, label: e.groupLabel, itemCount: its.length,
+                      span: sug.span, suggestedMode: sug.mode, hint: sug.hint || null,
+                      alcohol: +n.alcohol_g || 0 });
+      }
+      return e;
+    };
 
     for (const n of nut) {
       const label = String(n.group || '').trim();
@@ -612,7 +735,7 @@
           warnings.push({ text: n.date + ' · ' + label + ': has nutrition, but the servings file logs no ' +
             'food in that group — it was placed at the default time for its meal slot.' });
         }
-        entries.push(mk(n.date, g ? g.earliest : null, label, label, n, g ? g.foods : []));
+        entries.push(mk(n.date, g ? g.earliest : null, label, label, n, g ? g.foods : [], g ? g.items : []));
         continue;
       }
 
@@ -624,11 +747,11 @@
         warnings.push({ text: n.date + ': the nutrition file has only a day total, but the servings file ' +
           'shows a single meal group (' + (g.label || 'ungrouped') + '), so the day was joined as one ' +
           'meal at ' + (g.earliest || 'its default time') + '.' });
-        entries.push(mk(n.date, g.earliest, g.label, g.label || 'All food', n, g.foods));
+        entries.push(mk(n.date, g.earliest, g.label, g.label || 'All food', n, g.foods, g.items));
       } else if (!keys.length) {
         warnings.push({ text: n.date + ': nutrition with no matching servings rows at all — imported as one ' +
           'meal at the default time.' });
-        entries.push(mk(n.date, null, null, 'All food', n, []));
+        entries.push(mk(n.date, null, null, 'All food', n, [], []));
       } else {
         // Genuinely ambiguous: a day total cannot be split across groups
         // without inventing numbers, so it is refused rather than guessed.
@@ -662,7 +785,7 @@
               hasGroupRows: Object.keys(hasGroupRows).length > 0,
               hasAlcoholColumn: !!(nutritionResult && nutritionResult.meta && nutritionResult.meta.columns &&
                                    nutritionResult.meta.columns.alcohol),
-              unresolvedDays: unresolvedDays, orphanGroups: orphans,
+              unresolvedDays: unresolvedDays, orphanGroups: orphans, groups: groups,
               nutritionRows: nut.length, timingRows: tim.length }
     };
   }
@@ -959,6 +1082,10 @@
         // screen can say what is inside an event named only "Breakfast".
         date: e.date, sources: (e.foods && e.foods.length) ? e.foods.slice() : [e.name],
         explicitTime: !!e.time,
+        // Group identity survives into the plan so the review screen can put
+        // a distribution toggle next to the events it governs.
+        groupKey: e.groupKey || null, groupLabel: e.groupLabel || null,
+        distributed: !!e.distributed, distIndex: e.distIndex, distCount: e.distCount || 0,
         slot: slot, group: e.mealSlot || '', amount: e.amount || '', flags: flags
       });
     }
@@ -1045,6 +1172,10 @@
     parseCronometerDailyNutrition: parseCronometerDailyNutrition,
     parseCronometerServingsSlim: parseCronometerServingsSlim,
     joinNutritionAndTiming: joinNutritionAndTiming,
+    expandDistributed: expandDistributed, splitEvenly: splitEvenly,
+    suggestDistribution: suggestDistribution, spanMinutes: spanMinutes, fmtSpan: fmtSpan,
+    DISTRIBUTE_MIN_SPAN_MIN: DISTRIBUTE_MIN_SPAN_MIN,
+    DISTRIBUTE_HINT_SPAN_MIN: DISTRIBUTE_HINT_SPAN_MIN,
     // registry (extension point for MyFitnessPal / FatSecret)
     registerImportParser: registerImportParser, listImportParsers: listImportParsers,
     detectParser: detectParser,

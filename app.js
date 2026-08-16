@@ -1223,7 +1223,12 @@
       },
       setDayOne: false,
       clashAck: false,
-      pendingEx: {}          // half-finished exercise classifications
+      pendingEx: {},         // half-finished exercise classifications
+      // groupKey -> 'merged' | 'distributed'. Seeded from the heuristic, then
+      // owned by the user: once a key is in here their choice wins.
+      distModes: ((o.parsed.meta && o.parsed.meta.groups) || []).reduce((m, g) => {
+        m[g.key] = g.suggestedMode; return m;
+      }, {})
     };
     // Reset the panel from any previous rejection.
     $('importTitle').textContent = 'Review import';
@@ -1260,7 +1265,13 @@
     if (imp.edited && imp.plan) {
       imp.rebuiltNote = 'Options changed, so the list below was rebuilt — your row edits were reset.';
     }
-    imp.plan = window.foodImport.mapEntriesToSchedule(imp.parsed.entries, {
+    // A joined group is one nutrition row over several timed items, so it can
+    // be booked as one event or as one per item. That expansion happens here,
+    // before mapping, so flipping a toggle costs only a remap.
+    const entries = imp.joined
+      ? window.foodImport.expandDistributed(imp.parsed.entries, imp.distModes)
+      : imp.parsed.entries;
+    imp.plan = window.foodImport.mapEntriesToSchedule(entries, {
       startDate: startDate, days: DAYS,
       merge: imp.options.merge,
       defaultTimes: imp.options.defaultTimes,
@@ -1380,6 +1391,43 @@
           '</select></div>').join('') + '</div>';
       ex.hidden = false;
     } else { ex.innerHTML = ''; ex.hidden = true; }
+
+    // ---- meal-group distribution ----------------------------------------
+    // A joined group holds one nutrition figure covering several timed items.
+    // Booking it at a single timestamp is fine for food, but for a drinking
+    // session it reshapes the BAC curve, so the choice is surfaced rather
+    // than decided silently.
+    const gEl = $('importGroups');
+    const groups = (meta.groups || []);
+    if (imp.joined && groups.length) {
+      let gh = '<h3>Meal groups with several items</h3>' +
+        '<p class="imp-opt-hint">The nutrition file gives one figure per group; the servings file ' +
+        'timestamps each item inside it. Choose whether a group arrives all at once or item by item.</p>';
+      for (const g of groups) {
+        const mode = imp.distModes[g.key] || g.suggestedMode;
+        const n = g.itemCount;
+        gh += '<div class="imp-grow"><div class="imp-grow-head">' +
+          '<span class="imp-gname">' + escAttr(g.label) + '</span>' +
+          '<span class="opt">' + esc(g.date) + ' · ' + n + ' items over ' +
+          esc(window.foodImport.fmtSpan(g.span)) +
+          (g.alcohol > 0 ? ' · ' + (Math.round(g.alcohol * 10) / 10) + ' g alcohol' : '') + '</span>' +
+          '<select data-groupmode="' + escAttr(g.key) + '">' +
+          '<option value="merged"' + (mode === 'merged' ? ' selected' : '') +
+            '>One event at ' + esc(g.label ? 'the first item\'s time' : 'the earliest time') + '</option>' +
+          '<option value="distributed"' + (mode === 'distributed' ? ' selected' : '') +
+            '>' + n + ' events, one per item</option>' +
+          '</select></div>';
+        if (mode === 'distributed') {
+          gh += '<div class="imp-gnote">Nutrition split evenly across items — edit individual ' +
+                'events below if the items differed substantially.</div>';
+        } else if (g.hint) {
+          gh += '<div class="imp-gnote hint">' + esc(g.hint) + '</div>';
+        }
+        gh += '</div>';
+      }
+      gEl.innerHTML = gh;
+      gEl.hidden = false;
+    } else { gEl.innerHTML = ''; gEl.hidden = true; }
 
     // ---- issues ---------------------------------------------------------
     // Parse warnings, mapper notes, skipped rows and per-entry flags all
@@ -1591,6 +1639,14 @@
       if (!pend.type) { delete map[name]; return; }   // still a half-answer
       map[name] = { type: pend.type, intensity: pend.intensity };
       saveExerciseMap(map);
+      remapImport();
+    });
+
+    // ---- per-group distribution mode ----
+    $('importGroups').addEventListener('change', e => {
+      const key = e.target.dataset && e.target.dataset.groupmode;
+      if (!imp || !key) return;
+      imp.distModes[key] = e.target.value;
       remapImport();
     });
 

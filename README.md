@@ -339,12 +339,53 @@ imported at all and is listed as such.
 Cronometer writes a day-total row alongside its group rows. That row is
 detected and ignored, because counting it as well would double the day.
 
+### Spreading a group across its item times
+
+A joined group carries one nutrition figure covering several timestamped
+items. By default it becomes **one event at the first item's time**, which is
+fine for food — the model cares about the load, not which forkful arrived
+when.
+
+It is not fine for alcohol. A BAC curve is entirely about drinks arriving
+spread out, so booking three beers over two hours as one 48 g dose overstates
+the peak and greatly overstates the time spent near it. In the bundled test
+case the merged version peaks about a third higher and spends roughly three
+times as long near that peak.
+
+So each multi-item group gets a choice on the review screen:
+
+| Mode | Result |
+|------|--------|
+| **One event** | The group's whole nutrition at the earliest item's time. |
+| **One per item** | One event per servings row, at that row's own time, with the group's nutrition split evenly across them. |
+
+Groups default to **one per item** when they contain alcohol *and* have two or
+more items spanning more than 30 minutes — the case where the choice changes
+the answer. Everything else defaults to one event; a group of any kind
+spanning more than 90 minutes gets a note suggesting you consider splitting
+it, since something that long isn't really one sitting. You can override
+either way, per group.
+
+Distributed events are named `<Group> — <Food Name>`, e.g. *Dinner — Veil
+Beer*, so the schedule stays readable.
+
+**The even split is an assumption, not a measurement.** The nutrition file
+does not say how a group's macros divide among its items, so the burger in a
+beer session receives its quarter share of the alcohol. The review screen says
+so, and every resulting event is editable before you confirm — editing one
+event never rebalances the others.
+
+What is *not* an assumption is the total: the parts always sum back to the
+group's figures exactly, with any rounding remainder placed on the last event.
+Switching modes cannot change how much you ate or drank.
+
 ### The review screen
 
 | Section | What it is for |
 |---------|----------------|
 | Summary | Which file(s), which importer read them, how many source rows became how many events, and which calendar date is being treated as Day 1. |
 | Import options | The merge toggle and the default times (below). |
+| Meal groups with several items | Two-file imports only: whether each group arrives as one event or one per item (below). |
 | Classify these exercises | Only for exercise imports — see below. |
 | Warnings | Rows that could not be read, entries placed by guesswork, calorie mismatches, and anything falling outside the 5-day window. Nothing is dropped without appearing here. |
 | Timeline | Every event that will be added, grouped by day with that day's macro totals. Each row can be edited or deleted with ✕. |
@@ -802,6 +843,19 @@ assuming your body would behave that way.
   Adjust the defaults or individual rows on the review screen — meal timing
   genuinely changes the results.
 
+**A drinking session imported as one event and the BAC peak looks too high.**
+- Open the review screen again and set that group to **one event per item**.
+  A group only auto-splits when it contains alcohol and spans more than 30
+  minutes; a session logged with a single timestamp has nothing to spread.
+- Check the servings file actually carries per-item times. Without them there
+  is nothing to distribute across.
+
+**A distributed group gave the burger a share of the beer.**
+- Expected — the nutrition file only reports totals per group, so the split is
+  even. Edit the individual events on the review screen before confirming;
+  changing one never rebalances the others. The group total stays exact
+  either way.
+
 **An imported workout burns a different number of calories than Cronometer said.**
 - Expected. The simulator computes the cost itself from duration, intensity and
   your profile, then spends it out of specific fuel stores. Cronometer's figure
@@ -854,7 +908,7 @@ It covers three areas:
 2. **Post-workout glycogen resynthesis** — two fixtures at different carb
    doses, checking the muscle refill, that mass is conserved, and that the
    larger dose stores more.
-3. **Food-log import** — 189 checks over the fixtures in
+3. **Food-log import** — 237 checks over the fixtures in
    `test-scenarios/imports/`: column matching against decoy headers
    (`Net Carbs`, `Saturated`, `Cystine`), quoted food names containing commas,
    blank cells becoming 0 rather than NaN, alcohol grams reaching the schedule
@@ -863,7 +917,12 @@ It covers three areas:
    variant adds the (Date, Group) join: per-group macros, earliest-time
    selection, `3:43 PM` mapping to `15:43`, the day-total row not being
    double-counted, groups present in only one file, and the unresolvable-day
-   refusal when Daily Nutrition was exported without group rows.
+   refusal when Daily Nutrition was exported without group rows. Distribution
+   adds the auto-selection heuristic in both directions, exact mass
+   conservation across the split, and a directional check that spreading the
+   same alcohol over two hours lowers peak BAC — compared against a
+   data-derived threshold rather than a fixed number, so tuning the model
+   cannot break it.
 
 To run it, serve this folder and open the page:
 

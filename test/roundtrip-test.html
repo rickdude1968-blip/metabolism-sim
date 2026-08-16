@@ -359,7 +359,10 @@
                  // the two-file variant: nutrition and timing live in separate exports
                  'cronometer-dailynutrition-grouprows.csv',
                  'cronometer-dailynutrition-nogrouprows.csv',
-                 'cronometer-servings-slim.csv'];
+                 'cronometer-servings-slim.csv',
+                 // a drinking session, for the distribute-across-item-times path
+                 'cronometer-dailynutrition-beersession.csv',
+                 'cronometer-servings-beersession.csv'];
     const T = [];
     const ok = (name, cond, detail) => T.push({ name, pass: !!cond, detail: detail || '' });
     const eq = (name, got, want) =>
@@ -780,6 +783,144 @@
       ok('nutrition alone: none of them invent a time', JA.entries.every(e => e.time === null));
       ok('nutrition alone: the missing timing file is reported',
          JA.warnings.some(w => /logs no food/i.test(w.text)));
+
+      // ---- 13 · distribute a group across its item times ------------------
+      // WHY THIS EXISTS
+      //
+      // In the two-file join, nutrition is known only per (Date, Group) but
+      // the servings file timestamps every item inside it. Collapsing the
+      // group to one timestamp is harmless for food and wrong for alcohol:
+      // the BAC curve's whole subject is that drinks arrive spread out, so
+      // three beers over two hours booked as a single dose overstates both
+      // the peak and the time spent above any threshold.
+      //
+      // The split is EVEN, which is an assumption the source cannot settle —
+      // hence the review-screen note and the per-event edits. What must never
+      // be approximate is the total: the parts have to sum back exactly, or
+      // an import quietly changes how much alcohol was drunk.
+      const nutB = F.parseCronometerDailyNutrition(csv['cronometer-dailynutrition-beersession.csv']);
+      const timB = F.parseCronometerServingsSlim(csv['cronometer-servings-beersession.csv']);
+      const JB = F.joinNutritionAndTiming(nutB, timB);
+      const gOf = label => (JB.meta.groups || []).filter(g => g.label === label)[0];
+
+      // ---- the heuristic --------------------------------------------------
+      const gDin = gOf('Dinner'), gBrk = gOf('Breakfast');
+      ok('distribute: the drinking group is offered a toggle', !!gDin);
+      eq('distribute: 4 items in the Dinner group', gDin && gDin.itemCount, 4);
+      eq('distribute: Dinner spans 18:00 → 20:00 = 120 min', gDin && gDin.span, 120);
+      near('distribute: Dinner carries alcohol', gDin ? gDin.alcohol : -1, 48.5);
+      eq('heuristic: alcohol + 2 items + >30 min span -> distributed',
+         gDin && gDin.suggestedMode, 'distributed');
+      // The counter-case, so the heuristic is not simply "always distribute".
+      ok('heuristic: the food-only group is offered a toggle too', !!gBrk);
+      eq('heuristic: food-only group has 2 items', gBrk && gBrk.itemCount, 2);
+      eq('heuristic: 15 min apart', gBrk && gBrk.span, 15);
+      eq('heuristic: no alcohol, short span -> merged', gBrk && gBrk.suggestedMode, 'merged');
+      // Alcohol alone is not enough — it has to be spread out to matter.
+      eq('heuristic: alcohol within 30 min stays merged',
+         F.suggestDistribution(20, [{ time: '19:00' }, { time: '19:20' }]).mode, 'merged');
+      eq('heuristic: a single item can never be distributed',
+         F.suggestDistribution(40, [{ time: '19:00' }]).mode, 'merged');
+      eq('heuristic: a long food-only group is hinted, not switched',
+         F.suggestDistribution(0, [{ time: '12:00' }, { time: '15:00' }]).mode, 'merged');
+      ok('heuristic: …and the hint says so',
+         /longer than a single sitting/i.test(
+           F.suggestDistribution(0, [{ time: '12:00' }, { time: '15:00' }]).hint || ''));
+
+      // ---- expansion -------------------------------------------------------
+      const DIST = {}, MERGE = {};
+      (JB.meta.groups || []).forEach(g => { DIST[g.key] = 'distributed'; MERGE[g.key] = 'merged'; });
+      const expD = F.expandDistributed(JB.entries, DIST);
+      const expM = F.expandDistributed(JB.entries, MERGE);
+      eq('expand: merged keeps one event per group', expM.length, 2);
+      eq('expand: distributed gives 4 + 2 = 6 events', expD.length, 6);
+
+      const dinD = expD.filter(e => e.groupLabel === 'Dinner');
+      eq('expand: Dinner becomes 4 events', dinD.length, 4);
+      eq('expand: at the items\' own times, in order',
+         dinD.map(e => e.time).join(','), '18:00,18:15,19:00,20:00');
+      eq('expand: named "<Group> — <Food Name>"', dinD[0].name, 'Dinner — Veil Beer');
+      eq('expand: including the non-drink item', dinD[1].name, 'Dinner — Burger, grilled');
+
+      // ---- mass conservation ------------------------------------------------
+      // The split is even, so shares carry rounding; the LAST event absorbs
+      // the remainder. Totals must come back exact.
+      const MASS_TOL = 0.005;                       // half of the 0.01 g requirement
+      [['kcal', 1103], ['carbs_g', 60.1], ['protein_g', 32.7],
+       ['fat_g', 34.3], ['alcohol_g', 48.5]].forEach(([f, want]) => {
+        const got = dinD.reduce((s, e) => s + e[f], 0);
+        ok('mass: distributed ' + f + ' sums back to the group total',
+           Math.abs(got - want) <= MASS_TOL, 'got ' + got + ', want ' + want);
+      });
+      ok('mass: shares are not silently identical where they cannot be',
+         dinD[3].alcohol_g !== dinD[0].alcohol_g,
+         'remainder should land on the last event: ' + JSON.stringify(dinD.map(e => e.alcohol_g)));
+      // splitEvenly on its own, at awkward values.
+      [[10, 3], [48.5, 4], [0.01, 4], [100, 7], [0, 5]].forEach(([t, n]) => {
+        const parts = F.splitEvenly(t, n);
+        eq('mass: splitEvenly(' + t + ', ' + n + ') returns ' + n + ' parts', parts.length, n);
+        ok('mass: splitEvenly(' + t + ', ' + n + ') sums exactly',
+           Math.abs(parts.reduce((s, v) => s + v, 0) - t) <= MASS_TOL,
+           JSON.stringify(parts) + ' sums to ' + parts.reduce((s, v) => s + v, 0));
+      });
+      // Distributing ONE group must leave the others exactly as they were.
+      const onlyDinner = F.expandDistributed(JB.entries, { [gDin.key]: 'distributed' });
+      eq('expand: distributing one group leaves the other merged',
+         onlyDinner.filter(e => e.groupLabel === 'Breakfast').length, 1);
+      near('expand: …with its totals untouched',
+        onlyDinner.filter(e => e.groupLabel === 'Breakfast')[0].kcal, 240);
+
+      // ---- through the mapper, then the model -------------------------------
+      const mapOpt = { startDate: '2026-10-05', days: 5 };
+      const planDist = F.mapEntriesToSchedule(expD, mapOpt);
+      const planMerge = F.mapEntriesToSchedule(expM, mapOpt);
+      eq('distribute+map: 6 events', planDist.planned.length, 6);
+      eq('distribute+map: merged comparison has 2', planMerge.planned.length, 2);
+      near('distribute+map: day-1 alcohol is identical either way',
+        planDist.planned.reduce((s, p) => s + p.ev.alcohol, 0),
+        planMerge.planned.reduce((s, p) => s + p.ev.alcohol, 0));
+      near('distribute+map: and equals the logged 48.5 g',
+        planDist.planned.reduce((s, p) => s + p.ev.alcohol, 0), 48.5);
+
+      // The point of the whole feature. Directional only — no fixed number,
+      // so tuning the BAC model cannot break this assertion.
+      const bacRun = plan => {
+        const sd = window.runSimulation(PROFILE, plan.planned.map(p => p.ev), null, null);
+        const series = sd.map(d => d.bac);
+        return { peak: Math.max.apply(null, series), series: series };
+      };
+      const bacD = bacRun(planDist), bacM = bacRun(planMerge);
+      const minsOver = (r, th) => r.series.filter(b => b >= th).length * 5;
+      ok('BAC: both scenarios actually produce alcohol in the blood',
+         bacD.peak > 0 && bacM.peak > 0,
+         'distributed ' + bacD.peak.toFixed(4) + ', merged ' + bacM.peak.toFixed(4));
+      ok('BAC: spreading the same 48.5 g over 2 h LOWERS the peak',
+         bacD.peak < bacM.peak,
+         'distributed peak ' + bacD.peak.toFixed(4) + ' vs merged ' + bacM.peak.toFixed(4));
+      // Threshold taken from the data, not a constant: half the merged peak is
+      // always crossed by both runs, so this compares exposure rather than
+      // accidentally sitting above or below both curves after model tuning.
+      const TH = bacM.peak / 2;
+      ok('BAC: and shortens the time spent near the peak',
+         minsOver(bacD, TH) < minsOver(bacM, TH),
+         'above ' + TH.toFixed(4) + ' g/dL: distributed ' + minsOver(bacD, TH) +
+         ' min vs merged ' + minsOver(bacM, TH) + ' min');
+      // Same alcohol either way, so total exposure must not vanish — the curve
+      // is flatter and longer-tailed, not smaller.
+      ok('BAC: distributing does not simply erase the alcohol',
+         minsOver(bacD, 0.0001) > 0 && bacD.peak > bacM.peak * 0.5,
+         'distributed peak ' + bacD.peak.toFixed(4) + ' vs merged ' + bacM.peak.toFixed(4));
+
+      // ---- overriding the default -------------------------------------------
+      // The user's choice must win over the heuristic in BOTH directions.
+      const forcedMerge = F.expandDistributed(JB.entries, { [gDin.key]: 'merged' });
+      eq('override: forcing the drinking group to merged gives one event',
+         forcedMerge.filter(e => e.groupLabel === 'Dinner').length, 1);
+      const forcedDist = F.expandDistributed(JB.entries, { [gBrk.key]: 'distributed' });
+      eq('override: forcing the food group to distributed gives two',
+         forcedDist.filter(e => e.groupLabel === 'Breakfast').length, 2);
+      eq('override: an absent key falls back to the suggestion',
+         F.expandDistributed(JB.entries, {}).filter(e => e.groupLabel === 'Dinner').length, 4);
 
       // ---- render --------------------------------------------------------
       const fails = T.filter(t => !t.pass);
