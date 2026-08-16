@@ -163,6 +163,16 @@
           <span id="csvStatus" class="csv-status"></span>
         </div>
 
+        <!-- Food-log import. Separate from the events CSV above on purpose:
+             that one reads THIS app's own layout, this one reads a foreign
+             export and always stops at a review screen first. -->
+        <div class="csv-row">
+          <label class="filebtn foodlog" title="Import a Cronometer export — Profile ▸ Account ▸ Export Data ▸ Export Servings (or Export Exercises). You get a review screen before anything is added.">Import food log…
+            <input id="foodLogImport" type="file" accept=".csv,text/csv,text/plain" hidden />
+          </label>
+          <span id="foodLogStatus" class="csv-status" role="status" aria-live="polite"></span>
+        </div>
+
         <div class="btn-row">
           <button id="runBtn" class="primary">Run simulation</button>
           <button id="resetBtn">Reset to example</button>
@@ -279,10 +289,67 @@
     </button>
   </nav>
 
+  <!-- ============ Review-before-import screen ============
+       Lives outside #appScroll so it covers the whole app on every screen
+       size. Nothing here touches the schedule until Confirm is pressed. -->
+  <div id="importOverlay" class="import-overlay" hidden>
+    <div class="import-modal" role="dialog" aria-modal="true" aria-labelledby="importTitle">
+      <header class="import-head">
+        <h2 id="importTitle">Review import</h2>
+        <button type="button" id="importClose" class="import-x" title="Cancel — nothing is added" aria-label="Cancel import">✕</button>
+      </header>
+
+      <div class="import-body">
+        <div id="importSummary" class="import-summary"></div>
+
+        <details class="import-opts" id="importOptsWrap">
+          <summary>Import options</summary>
+          <div class="import-opts-body">
+            <label class="imp-check">
+              <input type="checkbox" id="impMerge" />
+              <span>Merge each meal group into one event
+                <span class="opt">(off = one event per logged food, matching how the log was kept)</span></span>
+            </label>
+
+            <div id="impTimesWrap">
+              <p class="imp-opt-hint">Times used when the export has no clock time:</p>
+              <div class="imp-times">
+                <label>Breakfast<input type="time" id="impTBreakfast" value="07:30" /></label>
+                <label>Lunch<input type="time" id="impTLunch" value="12:30" /></label>
+                <label>Dinner<input type="time" id="impTDinner" value="18:30" /></label>
+                <label>Snack<input type="time" id="impTSnack" value="15:00" /></label>
+                <label>2nd snack<input type="time" id="impTSnack2" value="21:00" /></label>
+                <label>Ungrouped<input type="time" id="impTUnknown" value="12:00" /></label>
+              </div>
+            </div>
+
+            <div id="impExStartWrap" hidden>
+              <p class="imp-opt-hint">Cronometer's exercise export has no start time:</p>
+              <label class="imp-exstart">Session start<input type="time" id="impExStart" value="17:00" /></label>
+            </div>
+          </div>
+        </details>
+
+        <div id="importExercise" class="import-exercise" hidden></div>
+        <div id="importIssues" class="import-issues"></div>
+        <div id="importTimeline" class="import-timeline"></div>
+      </div>
+
+      <footer class="import-foot">
+        <div id="importClash" class="import-clash" hidden></div>
+        <div class="import-actions">
+          <button type="button" id="importCancel">Cancel</button>
+          <button type="button" id="importConfirm" class="primary">Confirm import</button>
+        </div>
+      </footer>
+    </div>
+  </div>
+
   <!-- Chart.js — vendored locally so the app works offline / from file://.
        (Spec suggested the jsDelivr CDN; swap this line back if you prefer it.) -->
   <script src="chart.umd.min.js"></script>
   <script src="simulation.js"></script>
+  <script src="importers.js"></script>
   <script src="charts.js"></script>
   <script src="app.js"></script>
 </body>

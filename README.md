@@ -41,16 +41,17 @@ deficit compounding, or a rest day letting glycogen recover).
 1. [Quick start](#quick-start)
 2. [What's in the folder](#whats-in-the-folder)
 3. [How to use it](#how-to-use-it)
-4. [Using it on a phone](#using-it-on-a-phone)
-5. [How the model works](#how-the-model-works)
-6. [The charts and status panel](#the-charts-and-status-panel)
-7. [Deliberate deviations from a literal reading of the spec](#deliberate-deviations)
-8. [Limitations (what it does NOT model)](#limitations)
-9. [System requirements & restrictions](#system-requirements--restrictions)
-10. [Possible errors & troubleshooting](#possible-errors--troubleshooting)
-11. [Customizing / editing the app](#customizing--editing-the-app)
-12. [Scientific references](#scientific-references)
-13. [License](#license)
+4. [Importing from a nutrition app](#importing-from-a-nutrition-app)
+5. [Using it on a phone](#using-it-on-a-phone)
+6. [How the model works](#how-the-model-works)
+7. [The charts and status panel](#the-charts-and-status-panel)
+8. [Deliberate deviations from a literal reading of the spec](#deliberate-deviations)
+9. [Limitations (what it does NOT model)](#limitations)
+10. [System requirements & restrictions](#system-requirements--restrictions)
+11. [Possible errors & troubleshooting](#possible-errors--troubleshooting)
+12. [Customizing / editing the app](#customizing--editing-the-app)
+13. [Scientific references](#scientific-references)
+14. [License](#license)
 
 ---
 
@@ -80,6 +81,7 @@ the rest by exact name, so renaming or separating them breaks the app.
 | `index.html` | The page itself — layout, input controls, chart containers. **This is the file you open.** |
 | `simulation.js` | The metabolic model. Runs the 5-minute-step simulation and returns 1,440 timesteps (5 days) of data. The number of days is the `DAYS` constant near the top — change it to simulate a different span. |
 | `charts.js` | Draws the six charts using Chart.js, plus the meal/exercise/sleep shading and the draggable "now" cursor. |
+| `importers.js` | Reads food-log exports from other apps (Cronometer today) and turns them into schedule events. Self-contained and DOM-free, so new sources plug in here without touching the rest. |
 | `app.js` | Connects the buttons, sliders, and schedule builder to the model; writes the status panel; handles files and autosave. |
 | `styles.css` | Colors, layout, and styling. |
 | `chart.umd.min.js` | The Chart.js graphing library, bundled locally so no internet is needed. |
@@ -88,6 +90,7 @@ the rest by exact name, so renaming or separating them breaks the app.
 | `apple-touch-icon.png` | The home-screen icon on iOS, which ignores the manifest's icons. |
 | `LICENSE` | The GNU GPL v3, which this program is released under. |
 | `README.md` | This file. |
+| `test-scenarios/` | Fixture files the regression test loads, including `imports/` for the food-log importers. Not needed to run the app. |
 | `test/roundtrip-test.html` | A regression test — see [Regression test](#regression-test--run-this-after-changing-the-model). Not needed to run the app. |
 
 ---
@@ -274,6 +277,129 @@ a finite number"*). Nothing is ever partially applied — a half-loaded scenario
 would otherwise reach the model as `NaN` and produce curves that look fine and
 mean nothing. Older files saved before this format are still accepted, with a
 note that their continuation will be approximate across the seam.
+
+---
+
+## Importing from a nutrition app
+
+**Import food log…** (under the schedule) reads an export from a nutrition
+tracker and turns it into meals and training sessions. Today it understands
+**Cronometer**; MyFitnessPal and FatSecret are planned and will appear on the
+same button, because the file that reads them is built to take more sources.
+
+Nothing is added until you press **Confirm import**. Everything the importer
+worked out is shown to you first, and all of it is editable.
+
+### Getting the file out of Cronometer
+
+On the Cronometer website (not the phone app):
+
+1. **Profile ▸ Account ▸ Export Data**
+2. Pick a date range.
+3. **Export Servings** for food, or **Export Exercises** for training.
+
+Export the CSV as-is — do not delete or rename the header row, which is how
+every column is located. You can import the two files one after the other.
+
+### The review screen
+
+| Section | What it is for |
+|---------|----------------|
+| Summary | Which file, which importer read it, how many rows became how many events, and which calendar date is being treated as Day 1. |
+| Import options | The merge toggle and the default times (below). |
+| Classify these exercises | Only for exercise imports — see below. |
+| Warnings | Rows that could not be read, entries placed by guesswork, calorie mismatches, and anything falling outside the 5-day window. Nothing is dropped without appearing here. |
+| Timeline | Every event that will be added, grouped by day with that day's macro totals. Each row can be edited or deleted with ✕. |
+
+**Merge each meal group into one event** is off by default, giving one event
+per logged food — which matches how the log was actually kept. Turn it on to
+collapse each group (Breakfast, Lunch, …) into a single meal with summed
+macros. Merging never changes a day's totals, only how many events carry them.
+
+> Changing any option rebuilds the list from the file, which discards row edits
+> you have already made. It says so when it happens. Set the options first, then
+> edit rows.
+
+### Times
+
+If your Cronometer diary records times, they are used exactly as logged.
+If it does not, each entry is placed by its meal group:
+
+| Group | Default |
+|-------|---------|
+| Breakfast | 07:30 |
+| Lunch | 12:30 |
+| Dinner | 18:30 |
+| Snacks | 15:00 |
+| A second, separately-named snack group the same day | 21:00 |
+| No group, or a group name I don't recognise | 12:00 |
+
+All six are editable on the review screen, and any individual row's time can be
+changed afterwards. Because meal timing drives insulin, glycogen refill and the
+overnight fast, a guessed time is worth a look — every row placed this way is
+labelled *"time assigned by this app"*.
+
+### Exercises
+
+Cronometer's exercise export says what you did and for how long, but not how
+the body should treat it. The first time a given exercise name appears you are
+asked to classify it as **aerobic** or **resistance** and pick an intensity.
+The answer is remembered in this browser, so repeat imports never ask twice.
+Until a name is classified, its rows are held back rather than guessed at.
+
+The export has no start time either; all sessions default to **17:00**,
+adjustable for the whole import or per row.
+
+**Cronometer's "Calories Burned" is deliberately ignored.** The simulator
+computes a session's cost itself, from duration, intensity and your profile,
+and then spends that cost out of specific fuel stores. Importing a flat calorie
+figure would double-count it. The logged figure is shown on each row so you can
+see the difference; expect the two to disagree.
+
+### Checks it runs
+
+- **Calorie consistency.** Each entry's logged calories are compared with what
+  its macros imply (4/4/9 plus 7 kcal/g for alcohol). More than 15% apart and
+  the row is flagged. This usually means an incomplete food record — most often
+  an entry logged with macros but zero calories.
+- **Blank cells count as zero, not as missing.** A blank Alcohol cell is a real
+  zero because Cronometer tracks alcohol; a source that cannot see alcohol at
+  all would be treated differently.
+- **Days outside the window.** Dates before Day 1 or beyond Day 5 are listed as
+  skipped. They are never silently dropped.
+
+### Day 1 and dates
+
+Dates are used **only** to work out which simulation day an entry belongs to.
+Once that is done the events are keyed by day number alone, exactly like
+hand-entered ones — so a scenario behaves identically whether or not a Day 1
+date is set.
+
+If no Day 1 date is set, the earliest date in the file becomes Day 1 and the
+review screen offers to record that date as the scenario's label.
+
+### Importing twice
+
+Import **adds**; it never replaces or removes. If a target day already has
+events, the review screen says so and makes you tick a box before confirming,
+because importing the same file twice will otherwise quietly double that day.
+
+### If the file is rejected
+
+You'll get a panel naming what was missing and listing the columns actually
+found. The usual cause is exporting the wrong report — a Servings export needs
+`Day` and `Food Name`, an Exercises export needs `Day`, `Exercise` and
+`Minutes`. Editing the header row in a spreadsheet before importing will also
+do it.
+
+### Adding another source
+
+`importers.js` is split into three layers: CSV/header plumbing, one **parser**
+per source, and a shared **mapper**. A new source only needs a parser that
+returns the common `ImportedEntry` shape, registered through
+`registerImportParser()`. Detection, the review screen, day mapping, merging
+and default times all come for free. The contract is documented at the top of
+the file.
 
 ---
 
@@ -606,6 +732,35 @@ assuming your body would behave that way.
   won't perfectly agree unless your kcal equals 4×carbs + 4×protein + 9×fat +
   7×alcohol. Enter whichever you care about most.
 
+**"Nothing recognised that file" when importing a food log.**
+- Check you exported the right report: **Export Servings** (food) or **Export
+  Exercises** (training), not one of Cronometer's other exports.
+- The first line has to be the export's original header row. If you opened the
+  file in a spreadsheet and renamed, reordered or deleted header cells, export
+  a fresh copy.
+- Some spreadsheets save as semicolon-separated CSV in non-US locales. Save as
+  a plain comma-separated CSV.
+
+**A food log imported, but a day's totals look wrong.**
+- Open the review screen again and look at the warnings — an unreadable cell
+  counts as 0 and says so there.
+- If you imported the same file twice, that day now holds both copies. Import
+  adds and never replaces; delete the duplicates from the schedule list.
+- Check the **merge** toggle. Merging changes how many events a day has, but
+  never that day's totals — if the totals themselves moved, something else did
+  it.
+
+**Imported meals are all at 07:30 / 12:30 / 18:30.**
+- Your Cronometer diary isn't recording times, so each entry was placed by its
+  meal group. Every one of those rows is labelled *"time assigned by this app"*.
+  Adjust the defaults or individual rows on the review screen — meal timing
+  genuinely changes the results.
+
+**An imported workout burns a different number of calories than Cronometer said.**
+- Expected. The simulator computes the cost itself from duration, intensity and
+  your profile, then spends it out of specific fuel stores. Cronometer's figure
+  is shown for reference only and is never used.
+
 **The results look extreme or physically impossible.**
 - Check your inputs for typos (e.g. 700 g of carbs instead of 70). The model
   will faithfully simulate nonsense inputs.
@@ -645,8 +800,21 @@ After any edit, just refresh the browser (no build step).
 This repository includes a permanent, committed regression test at
 **`test/roundtrip-test.html`**, next to the app files.
 
-It verifies that **continuing a scenario reproduces an uninterrupted run
-exactly** — all 18 state and trajectory variables, to floating-point tolerance.
+It covers three areas:
+
+1. **Scenario chaining** — that continuing a scenario reproduces an
+   uninterrupted run **exactly**, across all 18 state and trajectory variables
+   to floating-point tolerance.
+2. **Post-workout glycogen resynthesis** — two fixtures at different carb
+   doses, checking the muscle refill, that mass is conserved, and that the
+   larger dose stores more.
+3. **Food-log import** — 124 checks over the fixtures in
+   `test-scenarios/imports/`: column matching against decoy headers
+   (`Net Carbs`, `Saturated`, `Cystine`), quoted food names containing commas,
+   blank cells becoming 0 rather than NaN, alcohol grams reaching the schedule
+   event, default-time assignment, day-range mapping, the merge toggle, and a
+   clean rejection for a file that isn't a Cronometer export.
+
 To run it, serve this folder and open the page:
 
 ```bash
@@ -657,11 +825,22 @@ then visit `http://localhost:8000/test/roundtrip-test.html`. It runs on load and
 shows a green (pass) or red (fail) verdict; `window.__results.pass` gives the
 same answer programmatically.
 
+The page must be **served over HTTP** — the fixtures are fetched, which a
+`file://` open cannot do. Opened that way, the chaining section still runs and
+the two fixture-based sections report that they were skipped.
+
 **Why it matters:** if you add any new variable that persists between timesteps
 and forget to include it in the scenario file's `initialState` (or in the
 `carryInEvents` history), chained runs will silently drift away from continuous
 ones — curves that render fine and mean nothing. This test is what catches that.
 It is worth re-running after any change to `simulation.js`.
+
+The import checks guard a quieter failure: an importer that "works" while
+putting the wrong numbers in. Because Cronometer's column count varies with
+each user's diary settings, anything reading nutrients by column *position*
+breaks for one person and not another — so the fixtures deliberately include
+decoy columns and awkward rows, and are worth extending rather than tidying.
+Re-run after any change to `importers.js`.
 
 ---
 

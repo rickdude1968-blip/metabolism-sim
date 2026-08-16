@@ -1,0 +1,9 @@
+Day,Time,Group,Food Name,Amount,Category,Energy (kcal),Alcohol (g),Carbs (g),Fiber (g),Net Carbs (g),Fat (g),Saturated (g),Protein (g)
+2026-08-10,07:30,Breakfast,"Bread, whole wheat",2 slice,"Baked Goods",140,,24,4,20,2,0.4,8
+2026-08-10,07:30,Breakfast,"Cheese, cheddar, sharp",30 g,Dairy,120,,1,0,1,10,6.2,7
+2026-08-10,12:30,Lunch,"Yogurt, plain, low-fat",170 g,Dairy,100,,12,0,12,,,10
+2026-08-10,12:30,Lunch,"Kellogg's ""Special K"", original",1 cup,Cereal,120,,23,0.7,22.3,0.5,0.1,6
+2026-08-10,18:30,Dinner,"Beans, black, canned",1 cup,Legumes,220,,40,15,25,0.9,0.2,15
+2026-08-10,18:30,Dinner,"Zero-cal drink, diet",1 can,Beverages,0,,0,0,0,0,0,0
+2026-08-10,18:30,Dinner,"Mystery item, homemade",1 serving,,0,,30,2,28,10,3,5
+2026-08-10,15:00,Snacks,"Nuts, mixed, salted",28 g,Nuts,170,,abc,2.5,,15,2.1,5

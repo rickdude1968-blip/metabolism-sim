@@ -1032,6 +1032,498 @@
     reader.readAsText(file);
   }
 
+  // ---- food-log import (Cronometer today; see importers.js) --------------
+  // Everything foreign goes through a review screen. The events CSV above
+  // reads a file this app wrote, so its shape is known; a nutrition-app
+  // export is someone else's format carrying someone else's assumptions,
+  // and the only safe way to land it is to show the user exactly what will
+  // be added and let them change it first.
+
+  // Classifications are remembered so a weekly import only ever asks about
+  // an exercise name once. Keyed by the name exactly as the source writes it.
+  const EXMAP_KEY = 'metabolismSim.exerciseMap.v1';
+  function loadExerciseMap() {
+    try { const m = JSON.parse(localStorage.getItem(EXMAP_KEY)); return (m && typeof m === 'object') ? m : {}; }
+    catch (e) { return {}; }
+  }
+  function saveExerciseMap(m) { try { localStorage.setItem(EXMAP_KEY, JSON.stringify(m)); } catch (e) { /* private mode */ } }
+
+  let imp = null;                       // the in-progress import, or null
+  const impStatus = msg => { const el = $('foodLogStatus'); if (el) el.textContent = msg || ''; };
+  // esc() is for TEXT nodes and leaves quotes alone, which is fine there and
+  // wrong inside an attribute: a food logged as Kellogg's "Special K" would
+  // close the value early and arrive truncated. Imported names are foreign
+  // input, so every attribute they land in uses this instead.
+  const ESC_A = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+  function escAttr(s) { return String(s === undefined || s === null ? '' : s).replace(/[&<>"']/g, c => ESC_A[c]); }
+  const n0 = v => { const n = parseFloat(v); return isFinite(n) ? n : 0; };
+  function isoPlus(iso, n) {
+    const p = String(iso || '').split('-').map(Number);
+    if (p.length !== 3 || !p.every(isFinite)) return '';
+    const d = new Date(p[0], p[1] - 1, p[2] + n);
+    return isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined,
+      { weekday: 'short', day: 'numeric', month: 'short' });
+  }
+
+  function showImportOverlay(on) {
+    const el = $('importOverlay');
+    if (!el) return;
+    el.hidden = !on;
+    document.body.classList.toggle('import-open', !!on);
+    if (on) { const b = el.querySelector('.import-body'); if (b) b.scrollTop = 0; }
+  }
+  function closeImport() { imp = null; showImportOverlay(false); }
+
+  // A file we cannot read at all gets the same overlay, because the reason
+  // is usually actionable ("you exported the wrong report") and a one-line
+  // status message is not enough room to say so.
+  function openImportReject(title, message, detail) {
+    imp = null;
+    $('importTitle').textContent = title;
+    $('importSummary').innerHTML =
+      '<div class="imp-reject"><p><b>' + esc(message) + '</b></p>' +
+      (detail ? '<pre class="imp-reject-detail">' + esc(detail) + '</pre>' : '') +
+      '<p class="imp-opt-hint">In Cronometer: <b>Profile ▸ Account ▸ Export Data</b>, then ' +
+      '<b>Export Servings</b> for food or <b>Export Exercises</b> for training. ' +
+      'Pick a date range and export the CSV without editing the header row.</p></div>';
+    $('importOptsWrap').hidden = true;
+    $('importExercise').hidden = true;
+    $('importIssues').innerHTML = '';
+    $('importTimeline').innerHTML = '';
+    $('importClash').hidden = true;
+    $('importConfirm').style.display = 'none';
+    $('importCancel').textContent = 'Close';
+    showImportOverlay(true);
+  }
+
+  function importFoodLog(file) {
+    const reader = new FileReader();
+    reader.onerror = () => impStatus('Could not read that file.');
+    reader.onload = () => {
+      const text = String(reader.result || '');
+      const F = window.foodImport;
+      const parser = F.detectParser(text);
+      if (!parser) {
+        openImportReject('Import failed', 'Nothing recognised that file.',
+          'No importer claimed it. The first line has to be the export\'s own header row — ' +
+          'a servings export needs Day and Food Name columns, an exercises export needs ' +
+          'Day, Exercise and Minutes.');
+        impStatus('');
+        return;
+      }
+      let parsed;
+      try { parsed = parser.parse(text); }
+      catch (e) {
+        openImportReject('Import failed', e.message || 'That file could not be read.', e.detail || '');
+        impStatus('');
+        return;
+      }
+      imp = {
+        fileName: file.name || 'import.csv',
+        parser: parser,
+        parsed: parsed,
+        edited: false,
+        options: {
+          merge: false,
+          defaultTimes: Object.assign({}, window.foodImport.DEFAULT_TIMES),
+          exercise: { defaultStart: window.foodImport.DEFAULT_EXERCISE_START, map: loadExerciseMap() }
+        },
+        setDayOne: false,
+        clashAck: false,
+        pendingEx: {}          // half-finished exercise classifications
+      };
+      // Reset the panel from any previous rejection.
+      $('importTitle').textContent = 'Review import';
+      $('importOptsWrap').hidden = false;
+      $('importConfirm').style.display = '';
+      $('importCancel').textContent = 'Cancel';
+      syncOptionControls();
+      remapImport();
+      showImportOverlay(true);
+      impStatus('');
+    };
+    reader.readAsText(file);
+  }
+
+  // Push imp.options into the option controls (they persist across imports
+  // within a session, so they must be re-read, not assumed).
+  function syncOptionControls() {
+    const t = imp.options.defaultTimes;
+    $('impMerge').checked = !!imp.options.merge;
+    $('impTBreakfast').value = t.breakfast; $('impTLunch').value = t.lunch;
+    $('impTDinner').value = t.dinner; $('impTSnack').value = t.snack;
+    $('impTSnack2').value = t.snack2; $('impTUnknown').value = t.unknown;
+    $('impExStart').value = imp.options.exercise.defaultStart;
+    const isEx = imp.parsed.meta && imp.parsed.meta.kind === 'exercise';
+    $('impExStartWrap').hidden = !isEx;
+    $('impTimesWrap').hidden = isEx;
+  }
+
+  // Rebuild the plan from the current options. Any per-row edits are lost,
+  // which is why it warns rather than doing it quietly.
+  function remapImport() {
+    if (!imp) return;
+    if (imp.edited && imp.plan) {
+      imp.rebuiltNote = 'Options changed, so the list below was rebuilt — your row edits were reset.';
+    }
+    imp.plan = window.foodImport.mapEntriesToSchedule(imp.parsed.entries, {
+      startDate: startDate, days: DAYS,
+      merge: imp.options.merge,
+      defaultTimes: imp.options.defaultTimes,
+      exercise: imp.options.exercise
+    });
+    imp.edited = false;
+    renderReview();
+  }
+
+  function liveRows() { return imp.plan.planned.filter(p => !p.removed); }
+
+  function dayTotals(rows) {
+    const t = { kcal: 0, carbs: 0, protein: 0, fat: 0, alcohol: 0, minutes: 0, ex: 0 };
+    for (const p of rows) {
+      if (p.ev.type === 'meal') {
+        t.kcal += n0(p.ev.kcal); t.carbs += n0(p.ev.carbs); t.protein += n0(p.ev.protein);
+        t.fat += n0(p.ev.fat); t.alcohol += n0(p.ev.alcohol);
+      } else { t.ex++; t.minutes += n0(p.ev.duration); }
+    }
+    return t;
+  }
+  function totalsText(t) {
+    const bits = [];
+    if (t.kcal || t.carbs || t.protein || t.fat) {
+      bits.push(Math.round(t.kcal) + ' kcal', 'C ' + Math.round(t.carbs),
+                'P ' + Math.round(t.protein), 'F ' + Math.round(t.fat));
+      if (t.alcohol > 0) bits.push('Alc ' + Math.round(t.alcohol * 10) / 10 + ' g');
+    }
+    if (t.ex) bits.push(t.ex + ' session' + (t.ex !== 1 ? 's' : '') + ' · ' + Math.round(t.minutes) + ' min');
+    return bits.join(' · ') || '—';
+  }
+  // Totals move on every keystroke, so they are patched in place rather than
+  // re-rendering the list — a re-render would steal focus mid-edit.
+  function updateTotals() {
+    const rows = liveRows();
+    const days = {};
+    rows.forEach(p => { (days[p.ev.day] = days[p.ev.day] || []).push(p); });
+    for (let d = 1; d <= DAYS; d++) {
+      const el = $('impTot' + d);
+      if (el) el.textContent = totalsText(dayTotals(days[d] || []));
+    }
+    const g = $('impGrand');
+    if (g) g.textContent = rows.length + ' event' + (rows.length !== 1 ? 's' : '');
+  }
+
+  function renderReview() {
+    const P = imp.plan, meta = imp.parsed.meta || {};
+    const body = $('importOverlay').querySelector('.import-body');
+    const keepScroll = body ? body.scrollTop : 0;
+    const rows = liveRows();
+
+    // ---- summary --------------------------------------------------------
+    const dayNums = rows.map(p => p.ev.day);
+    const lo = dayNums.length ? Math.min.apply(null, dayNums) : 0;
+    const hi = dayNums.length ? Math.max.apply(null, dayNums) : 0;
+    let s = '<div class="imp-sum-line"><b>' + esc(imp.fileName) + '</b> · read as <b>' +
+      esc(imp.parser.label) + '</b></div>';
+    s += '<div class="imp-sum-line">' + imp.parsed.entries.length + ' row' +
+      (imp.parsed.entries.length !== 1 ? 's' : '') + ' in the file → <b id="impGrand">' +
+      rows.length + ' event' + (rows.length !== 1 ? 's' : '') + '</b>' +
+      (dayNums.length ? ' on Day ' + (lo === hi ? lo : lo + '–' + hi) : '') + '</div>';
+    s += '<div class="imp-sum-line imp-dayone">Day 1 = <b>' + esc(P.dayOne || '—') + '</b>' +
+      (P.inferredDayOne
+        ? ' <span class="opt">(taken from the earliest date in the file — no Day 1 date is set)</span>'
+        : ' <span class="opt">(this scenario\'s Day 1 date)</span>') + '</div>';
+    if (P.inferredDayOne) {
+      s += '<label class="imp-check imp-setdate"><input type="checkbox" id="impSetDayOne"' +
+        (imp.setDayOne ? ' checked' : '') + ' />' +
+        '<span>Also set this scenario\'s Day 1 date to ' + esc(P.dayOne) +
+        ' <span class="opt">(a label only — no calculation reads it)</span></span></label>';
+    }
+    $('importSummary').innerHTML = s;
+
+    // ---- exercise classification ----------------------------------------
+    const ex = $('importExercise');
+    if (P.unclassified.length) {
+      let h = '<h3>Classify these exercises</h3>' +
+        '<p class="imp-opt-hint">The export says what you did and for how long, but not how the ' +
+        'body should treat it. Choose once — the answer is remembered for future imports.</p>';
+      for (const name of P.unclassified) {
+        // Reflect any half-answer already given, so a re-render (triggered by
+        // any other option change) does not visibly reset the user's pick.
+        const pend = imp.pendingEx[name] || {};
+        h += '<div class="imp-exrow"><span class="imp-exname">' + esc(name) + '</span>' +
+          '<select data-exname="' + escAttr(name) + '" data-exf="type">' +
+          '<option value="">— choose —</option>' +
+          '<option value="aerobic"' + (pend.type === 'aerobic' ? ' selected' : '') + '>Aerobic</option>' +
+          '<option value="resistance"' + (pend.type === 'resistance' ? ' selected' : '') + '>Resistance</option></select>' +
+          '<select data-exname="' + escAttr(name) + '" data-exf="intensity">' +
+          ['light', 'moderate', 'vigorous'].map(i =>
+            '<option value="' + i + '"' +
+            ((pend.intensity || 'moderate') === i ? ' selected' : '') + '>' +
+            (i === 'vigorous' ? 'vigorous / hard' : i) + '</option>').join('') +
+          '</select></div>';
+      }
+      ex.innerHTML = h;
+      ex.hidden = false;
+    } else if (imp.parsed.meta && imp.parsed.meta.kind === 'exercise') {
+      const known = Object.keys(imp.options.exercise.map);
+      ex.innerHTML = '<h3>Exercise types</h3><div class="imp-exrows-known">' +
+        known.filter(k => imp.parsed.entries.some(e => e.name === k)).map(k =>
+          '<div class="imp-exrow"><span class="imp-exname">' + esc(k) + '</span>' +
+          '<select data-exname="' + escAttr(k) + '" data-exf="type">' +
+          '<option value="aerobic"' + (imp.options.exercise.map[k].type === 'aerobic' ? ' selected' : '') + '>Aerobic</option>' +
+          '<option value="resistance"' + (imp.options.exercise.map[k].type === 'resistance' ? ' selected' : '') + '>Resistance</option></select>' +
+          '<select data-exname="' + escAttr(k) + '" data-exf="intensity">' +
+          ['light', 'moderate', 'vigorous'].map(i =>
+            '<option value="' + i + '"' +
+            ((imp.options.exercise.map[k].intensity === i ||
+              (i === 'vigorous' && imp.options.exercise.map[k].intensity === 'hard')) ? ' selected' : '') +
+            '>' + (i === 'vigorous' ? 'vigorous / hard' : i) + '</option>').join('') +
+          '</select></div>').join('') + '</div>';
+      ex.hidden = false;
+    } else { ex.innerHTML = ''; ex.hidden = true; }
+
+    // ---- issues ---------------------------------------------------------
+    // Parse warnings, mapper notes, skipped rows and per-entry flags all
+    // land here. Nothing is dropped without appearing in this block.
+    let iss = '';
+    const note = imp.rebuiltNote; imp.rebuiltNote = '';
+    if (note) iss += '<div class="imp-issue info">↻ ' + esc(note) + '</div>';
+    for (const w of P.warnings) iss += '<div class="imp-issue warn">⚑ ' + esc(w) + '</div>';
+    for (const w of imp.parsed.warnings) iss += '<div class="imp-issue warn">⚑ ' + esc(w.text) + '</div>';
+    if (P.skipped.length) {
+      iss += '<details class="imp-skipped"><summary>' + P.skipped.length + ' row' +
+        (P.skipped.length !== 1 ? 's' : '') + ' outside the Day 1–' + DAYS +
+        ' window — not imported</summary><ul>' +
+        P.skipped.map(s2 => '<li>' + esc(s2.date) + ' · ' + esc(s2.name) +
+          ' <span class="opt">(' + esc(s2.reason) + ')</span></li>').join('') +
+        '</ul></details>';
+    }
+    const flagged = rows.reduce((n, p) => n + p.flags.filter(f => f.level === 'warn').length, 0);
+    if (flagged) {
+      iss += '<div class="imp-issue warn">⚑ ' + flagged + ' entr' + (flagged !== 1 ? 'ies' : 'y') +
+        ' below ' + (flagged !== 1 ? 'need' : 'needs') + ' a look — each is marked in the list.</div>';
+    }
+    $('importIssues').innerHTML = iss;
+
+    // ---- timeline -------------------------------------------------------
+    const byDay = {};
+    imp.plan.planned.forEach((p, i) => {
+      if (p.removed) return;
+      (byDay[p.ev.day] = byDay[p.ev.day] || []).push({ p, i });
+    });
+    let tl = '';
+    for (let d = 1; d <= DAYS; d++) {
+      const items = byDay[d];
+      if (!items) continue;
+      tl += '<div class="imp-day"><div class="imp-day-head"><span>Day ' + d +
+        '<span class="day-date"> · ' + esc(isoPlus(P.dayOne, d - 1)) + '</span></span>' +
+        '<span class="imp-tot" id="impTot' + d + '">' + esc(totalsText(dayTotals(items.map(o => o.p)))) +
+        '</span></div>';
+      tl += '<div class="imp-cols"><span>Time</span><span>What</span><span>kcal</span>' +
+            '<span>C</span><span>P</span><span>F</span><span>Alc</span><span></span></div>';
+      for (const { p, i } of items) {
+        const ev = p.ev;
+        tl += '<div class="imp-row" data-idx="' + i + '">';
+        if (ev.type === 'meal') {
+          tl += '<input class="imp-time" type="time" data-f="time" value="' + escAttr(ev.time) + '" />' +
+            '<input class="imp-name" type="text" data-f="name" value="' + escAttr(ev.name) + '" />' +
+            ['kcal', 'carbs', 'protein', 'fat', 'alcohol'].map(f =>
+              '<input class="imp-n" type="text" inputmode="decimal" data-f="' + f +
+              '" value="' + escAttr(ev[f]) + '" />').join('');
+        } else {
+          // The source's own exercise name, not just "Aerobic" — with four
+          // sessions on screen it is the only thing telling them apart.
+          tl += '<input class="imp-time" type="time" data-f="start" value="' + escAttr(ev.start) + '" />' +
+            '<span class="imp-name imp-exlabel">' +
+            (ev.type === 'resistance' ? '🏋 ' : '🏃 ') +
+            esc((p.sources && p.sources[0]) || (ev.type === 'resistance' ? 'Resistance' : 'Aerobic')) +
+            '</span>' +
+            '<input class="imp-n" type="text" inputmode="decimal" data-f="duration" value="' +
+            escAttr(ev.duration) + '" title="minutes" />' +
+            '<select class="imp-int" data-f="intensity">' +
+            (ev.type === 'resistance' ? ['light', 'moderate', 'hard'] : ['light', 'moderate', 'vigorous'])
+              .map(i => '<option' + (ev.intensity === i ? ' selected' : '') + '>' + i + '</option>').join('') +
+            '</select><span class="imp-pad"></span><span class="imp-pad"></span>';
+        }
+        tl += '<button type="button" class="del" data-rm="' + i + '" title="remove this row">✕</button>';
+        const sub = [];
+        if (p.group) sub.push(esc(p.group));
+        if (p.amount) sub.push(esc(p.amount));
+        if (ev.type !== 'meal') sub.push((ev.type === 'resistance' ? 'Resistance' : 'Aerobic') + ' · minutes + intensity');
+        if (p.sources && p.sources.length > 1) sub.push(p.sources.length + ' foods merged');
+        if (!p.explicitTime) sub.push('time assigned by this app');
+        if (sub.length) tl += '<div class="imp-sub">' + sub.join(' · ') + '</div>';
+        for (const f of p.flags) {
+          tl += '<div class="imp-flag ' + (f.level === 'info' ? 'info' : '') + '">' +
+            (f.level === 'info' ? 'ℹ ' : '⚑ ') + esc(f.text) + '</div>';
+        }
+        tl += '</div>';
+      }
+      tl += '</div>';
+    }
+    if (!tl) {
+      tl = '<div class="imp-empty">Nothing to import' +
+        (P.unclassified.length ? ' until the exercises above are classified.' : '.') + '</div>';
+    }
+    $('importTimeline').innerHTML = tl;
+
+    // ---- clash warning + confirm gate -----------------------------------
+    // Import APPENDS. That is the safe default, but it means importing twice
+    // silently doubles a day, so an occupied target day has to be confirmed.
+    const targetDays = {};
+    rows.forEach(p => { targetDays[p.ev.day] = true; });
+    const clash = Object.keys(targetDays).map(Number).filter(d =>
+      schedule.some(ev => (+ev.day || 1) === d)).sort((a, b) => a - b);
+    const clashEl = $('importClash');
+    if (clash.length) {
+      clashEl.innerHTML = '<label class="imp-check"><input type="checkbox" id="impClashAck"' +
+        (imp.clashAck ? ' checked' : '') + ' /><span><b>Day ' + clash.join(', ') +
+        '</b> already ' + (clash.length > 1 ? 'have' : 'has') + ' events. This import <b>adds</b> to ' +
+        (clash.length > 1 ? 'them' : 'it') + ' — nothing is replaced or removed, so you may end up ' +
+        'with duplicates. I understand.</span></label>';
+      clashEl.hidden = false;
+    } else { clashEl.innerHTML = ''; clashEl.hidden = true; }
+
+    const blocked = !rows.length || (clash.length && !imp.clashAck);
+    $('importConfirm').disabled = !!blocked;
+    $('importConfirm').textContent = rows.length
+      ? 'Confirm import — add ' + rows.length + ' event' + (rows.length !== 1 ? 's' : '')
+      : 'Confirm import';
+
+    if (body) body.scrollTop = keepScroll;
+  }
+
+  // Strip the review-only bookkeeping and coerce every field, so what lands
+  // in the schedule is indistinguishable from a hand-entered event.
+  function cleanImportedEvent(ev) {
+    const day = Math.min(DAYS, Math.max(1, Math.round(+ev.day || 1)));
+    const lbl = window.simUtil.minToLabel, hh = window.simUtil.hhmmToMin;
+    if (ev.type === 'meal') {
+      return { type: 'meal', day: day, time: lbl(hh(ev.time || '12:00')),
+               name: String(ev.name || 'Meal').trim() || 'Meal',
+               kcal: n0(ev.kcal), carbs: n0(ev.carbs), protein: n0(ev.protein),
+               fat: n0(ev.fat), alcohol: n0(ev.alcohol) };
+    }
+    const type = ev.type === 'resistance' ? 'resistance' : 'aerobic';
+    const allowed = type === 'resistance' ? ['light', 'moderate', 'hard'] : ['light', 'moderate', 'vigorous'];
+    let intensity = String(ev.intensity || 'moderate');
+    if (allowed.indexOf(intensity) < 0) intensity = 'moderate';
+    return { type: type, day: day, start: lbl(hh(ev.start || '17:00')),
+             duration: Math.max(1, Math.round(n0(ev.duration) || 30)), intensity: intensity };
+  }
+
+  function confirmImport() {
+    if (!imp) return;
+    const rows = liveRows();
+    if (!rows.length) return;
+    const added = rows.map(p => cleanImportedEvent(p.ev));
+    for (const ev of added) schedule.push(ev);
+
+    if (imp.plan.inferredDayOne && imp.setDayOne && imp.plan.dayOne) {
+      startDate = imp.plan.dayOne;
+      if ($('startDate')) $('startDate').value = startDate;
+    }
+    const meals = added.filter(e => e.type === 'meal').length;
+    const sess = added.length - meals;
+    const src = imp.parser.source || 'file';
+    const skipped = imp.plan.skipped.length;
+    closeImport();
+    renderList(); showDerived(); run(); flushWorking();
+    const bits = ['Imported ' + added.length + ' event' + (added.length !== 1 ? 's' : '') + ' from ' + src];
+    if (meals && sess) bits.push(meals + ' meals, ' + sess + ' session' + (sess !== 1 ? 's' : ''));
+    if (skipped) bits.push(skipped + ' row' + (skipped !== 1 ? 's' : '') + ' outside the day window skipped');
+    impStatus(bits.join(' · ') + '.');
+  }
+
+  function wireImport() {
+    const fi = $('foodLogImport');
+    if (!fi) return;
+    fi.addEventListener('change', e => {
+      if (e.target.files[0]) importFoodLog(e.target.files[0]);
+      e.target.value = '';                       // re-selecting the same file must re-fire
+    });
+    $('importClose').onclick = closeImport;
+    $('importCancel').onclick = closeImport;
+    $('importConfirm').onclick = confirmImport;
+    $('importOverlay').addEventListener('click', e => {
+      if (e.target === $('importOverlay')) closeImport();   // click the backdrop
+    });
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && !$('importOverlay').hidden) closeImport();
+    });
+
+    // ---- options -> remap ----
+    $('impMerge').addEventListener('change', e => {
+      imp.options.merge = e.target.checked; remapImport();
+    });
+    const TIME_IDS = { impTBreakfast: 'breakfast', impTLunch: 'lunch', impTDinner: 'dinner',
+                       impTSnack: 'snack', impTSnack2: 'snack2', impTUnknown: 'unknown' };
+    Object.keys(TIME_IDS).forEach(id => {
+      $(id).addEventListener('change', e => {
+        if (!imp || !e.target.value) return;
+        imp.options.defaultTimes[TIME_IDS[id]] = e.target.value;
+        remapImport();
+      });
+    });
+    $('impExStart').addEventListener('change', e => {
+      if (!imp || !e.target.value) return;
+      imp.options.exercise.defaultStart = e.target.value;
+      remapImport();
+    });
+
+    // ---- exercise classification ----
+    $('importExercise').addEventListener('change', e => {
+      const el = e.target, name = el.dataset.exname, f = el.dataset.exf;
+      if (!imp || !name || !f) return;
+      const map = imp.options.exercise.map;
+      // Answers accumulate in `pendingEx` first. The two selects can be used
+      // in either order, and an intensity chosen BEFORE a type has nowhere
+      // committed to live yet — parking it here is what stops it being
+      // silently discarded and the entry defaulting back to moderate.
+      const pend = imp.pendingEx[name] ||
+        (imp.pendingEx[name] = Object.assign({ type: '', intensity: 'moderate' }, map[name] || {}));
+      pend[f] = el.value;
+      if (!pend.type) { delete map[name]; return; }   // still a half-answer
+      map[name] = { type: pend.type, intensity: pend.intensity };
+      saveExerciseMap(map);
+      remapImport();
+    });
+
+    // ---- summary checkbox + clash acknowledgement ----
+    $('importSummary').addEventListener('change', e => {
+      if (imp && e.target.id === 'impSetDayOne') imp.setDayOne = e.target.checked;
+    });
+    $('importClash').addEventListener('change', e => {
+      if (!imp || e.target.id !== 'impClashAck') return;
+      imp.clashAck = e.target.checked;
+      $('importConfirm').disabled = !imp.clashAck || !liveRows().length;
+    });
+
+    // ---- per-row edit + delete ----
+    $('importTimeline').addEventListener('input', e => {
+      const el = e.target;
+      const row = el.parentElement && el.parentElement.classList.contains('imp-row')
+        ? el.parentElement : (el.closest ? el.closest('.imp-row') : null);
+      if (!imp || !row || !el.dataset.f) return;
+      const p = imp.plan.planned[+row.dataset.idx];
+      if (!p) return;
+      imp.edited = true;
+      const f = el.dataset.f;
+      if (f === 'name') p.ev.name = el.value;
+      else if (f === 'time' || f === 'start') { if (el.value) p.ev[f] = el.value; }
+      else if (f === 'intensity') p.ev.intensity = el.value;
+      else if (f === 'duration') p.ev.duration = Math.max(1, Math.round(n0(el.value)) || 1);
+      else p.ev[f] = n0(el.value);
+      updateTotals();
+    });
+    $('importTimeline').addEventListener('click', e => {
+      const btn = e.target.closest ? e.target.closest('[data-rm]') : null;
+      if (!imp || !btn) return;
+      const p = imp.plan.planned[+btn.dataset.rm];
+      if (p) { p.removed = true; renderReview(); }
+    });
+  }
+
   // ---- init --------------------------------------------------------------
   function init() {
     $('nowSlider').max = STEPS - 1;   // span the full multi-day window
@@ -1078,6 +1570,7 @@
 
     wireAdders();
     wireScenarios();
+    wireImport();
     renderList();
     showDerived();
     run();

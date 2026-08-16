@@ -297,3 +297,125 @@ button.primary:hover, .add-block button:hover { background: var(--accent-d); }
 .day-group .event { margin-bottom: 5px; }
 .event-empty { font-size: 11px; font-style: italic; padding: 2px 8px 6px; }
 .daysel { font-weight: 600; }
+
+/* ---- food-log import: review-before-import screen ---------------------- */
+/* The button that opens it sits with the CSV row but reads a FOREIGN file,
+   so it is tinted differently from this app's own import/export pair. */
+.filebtn.foodlog { border-color: var(--accent); color: var(--accent-d); font-weight: 600; }
+
+.import-overlay { position: fixed; inset: 0; z-index: 60; background: rgba(20,30,50,.45);
+  display: flex; align-items: center; justify-content: center; padding: 16px; }
+.import-overlay[hidden] { display: none; }
+/* Locking the page behind the modal stops iOS scrolling the app instead of
+   the dialog when a drag starts on the backdrop. */
+body.import-open { overflow: hidden; }
+
+.import-modal { background: var(--panel); border-radius: 14px; box-shadow: var(--shadow);
+  width: min(920px, 100%); max-height: min(90vh, 100%); display: flex; flex-direction: column;
+  overflow: hidden; }
+.import-head { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.import-head h2 { margin: 0; border: 0; padding: 0; font-size: 16px; }
+.import-x { background: none; border: 0; font-size: 18px; line-height: 1; color: var(--muted);
+  padding: 4px 8px; cursor: pointer; }
+.import-x:hover { color: var(--ink); }
+/* The only scrolling region: the header and the confirm bar stay put, so the
+   action you are being asked to take is never scrolled out of reach. */
+.import-body { overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 12px 16px; flex: 1; }
+.import-foot { border-top: 1px solid var(--border); padding: 10px 16px;
+  display: flex; flex-direction: column; gap: 8px; background: #fbfcfe; }
+.import-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.import-foot button:disabled { opacity: .5; cursor: not-allowed; }
+
+.import-summary { font-size: 13px; margin-bottom: 10px; }
+.imp-sum-line { margin: 2px 0; }
+.imp-dayone { color: var(--ink); }
+.imp-setdate { margin-top: 6px; }
+.import-summary .opt, .imp-opt-hint .opt { color: var(--muted); font-weight: 400; font-size: 11px; }
+
+.import-opts { border: 1px solid var(--border); border-radius: 10px; padding: 6px 10px;
+  margin-bottom: 10px; background: #fbfcfe; }
+.import-opts > summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--accent-d); }
+.import-opts-body { padding-top: 8px; display: flex; flex-direction: column; gap: 10px; }
+.imp-opt-hint { margin: 0; font-size: 11px; color: var(--muted); }
+.imp-times { display: grid; grid-template-columns: repeat(auto-fit, minmax(104px, 1fr)); gap: 8px; }
+.imp-exstart { max-width: 160px; }
+.imp-check { display: flex; flex-direction: row; align-items: flex-start; gap: 8px;
+  font-size: 12px; color: var(--ink); }
+.imp-check input { margin-top: 2px; flex: none; }
+
+.import-exercise { border: 1px solid var(--border); border-radius: 10px; padding: 10px;
+  margin-bottom: 10px; background: #fffdf5; }
+.import-exercise h3 { margin: 0 0 4px; font-size: 13px; }
+.imp-exrow { display: flex; align-items: center; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+.imp-exname { flex: 1 1 160px; font-size: 13px; font-weight: 600; }
+
+.import-issues { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
+.imp-issue { font-size: 12px; border-radius: 8px; padding: 6px 9px; }
+.imp-issue.warn { background: #fff6e5; border: 1px solid #f0dcb4; color: #7a5a12; }
+.imp-issue.info { background: #eef4fb; border: 1px solid #cfe0f2; color: var(--accent-d); }
+.imp-skipped { font-size: 12px; background: #f7f9fc; border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 9px; }
+.imp-skipped summary { cursor: pointer; color: var(--muted); }
+.imp-skipped ul { margin: 6px 0 0; padding-left: 18px; }
+.imp-skipped li { margin: 2px 0; }
+
+.imp-day { margin-bottom: 12px; }
+.imp-day-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--accent-d); background: #eef4fb; border: 1px solid var(--border);
+  border-radius: 6px; padding: 4px 8px; margin-bottom: 5px; }
+.imp-tot { font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--muted);
+  font-variant-numeric: tabular-nums; }
+/* One shared grid for the column captions and every row beneath them, so the
+   headings stay aligned with their fields as the modal is resized. */
+.imp-cols, .imp-row { display: grid; gap: 5px; align-items: center;
+  grid-template-columns: 92px minmax(90px, 1fr) 62px 52px 52px 52px 56px 30px; }
+.imp-cols { font-size: 9px; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--muted); padding: 0 2px 3px; }
+.imp-row { padding: 4px 2px; border-bottom: 1px solid #f2f4f8; }
+.imp-row input, .imp-row select { padding: 5px 6px; font-size: 12px; min-width: 0; }
+.imp-n { text-align: right; font-variant-numeric: tabular-nums; }
+.imp-exlabel { font-size: 12px; font-weight: 600; }
+.imp-pad { display: block; }
+.imp-row .del { grid-column: 8; background: none; border: 0; color: var(--muted);
+  font-size: 13px; padding: 2px; cursor: pointer; }
+.imp-row .del:hover { color: #C62828; }
+/* Sub-line and flags span the full row width beneath their fields. */
+.imp-sub, .imp-flag { grid-column: 1 / -1; font-size: 11px; }
+.imp-sub { color: var(--muted); padding-left: 2px; }
+.imp-flag { color: #7a5a12; background: #fff6e5; border: 1px solid #f0dcb4;
+  border-radius: 6px; padding: 3px 6px; margin-top: 2px; }
+.imp-flag.info { color: var(--accent-d); background: #eef4fb; border-color: #cfe0f2; }
+.imp-empty { font-size: 13px; color: var(--muted); font-style: italic; padding: 12px 2px; }
+
+.import-clash { font-size: 12px; background: #fff6e5; border: 1px solid #f0dcb4;
+  border-radius: 8px; padding: 8px 10px; color: #7a5a12; }
+.import-clash[hidden] { display: none; }
+
+.imp-reject p { margin: 0 0 8px; font-size: 13px; }
+.imp-reject-detail { white-space: pre-wrap; word-break: break-word; font-size: 11px;
+  background: #f7f9fc; border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 10px; margin: 0 0 8px; color: var(--muted); }
+
+/* Narrow screens: the 8-column grid stops fitting, so the row switches to
+   flex and wraps — time + name + delete on the first line, the macro boxes
+   flowing onto the next. `order` keeps that arrangement regardless of the
+   source order, which differs between meal rows and exercise rows. */
+@media (max-width: 620px) {
+  .import-overlay { padding: 0; }
+  .import-modal { max-height: 100%; height: 100%; width: 100%; border-radius: 0; }
+  .imp-cols { display: none; }
+  .imp-row { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+  .imp-row .imp-time { flex: 0 0 92px; order: 1; }
+  .imp-row .imp-name { flex: 1 1 120px; order: 2; }
+  .imp-row .del { flex: 0 0 30px; order: 3; }
+  /* A zero-height full-width item forces a wrap here, so the numeric strip
+     always starts its own line instead of the first box opportunistically
+     sharing line 1 whenever a given screen width happens to leave room. */
+  .imp-row::after { content: ''; flex: 0 0 100%; height: 0; order: 4; }
+  .imp-row .imp-n, .imp-row .imp-int { flex: 1 1 54px; order: 5; text-align: right; }
+  .imp-row .imp-int { text-align: left; }
+  .imp-sub, .imp-flag { flex: 1 1 100%; order: 6; }
+  .imp-pad { display: none; }
+}

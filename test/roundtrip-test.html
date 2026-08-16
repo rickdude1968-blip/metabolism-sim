@@ -56,6 +56,7 @@
 <div id="out">running…</div>
 
 <script src="../simulation.js"></script>
+<script src="../importers.js"></script>
 <script>
 (function () {
   'use strict';
@@ -326,6 +327,340 @@
                   alcoholInSystem: runB[0].alcoholInSystem, fatStored_g: runB[0].fatStored_g }
   };
   console.log('Round-trip results', window.__results);
+
+  // =======================================================================
+  //  Food-log CSV import (Cronometer)
+  // =======================================================================
+  // WHAT THIS GUARDS
+  //
+  // The importer's job is to be boring: the same file must always produce
+  // the same events. The failure modes it is watching for are the quiet
+  // ones, where an import "works" and the numbers are wrong:
+  //
+  //   · a nutrient column located by POSITION instead of by name — the
+  //     column count changes with the user's diary settings, so this breaks
+  //     for one person and not another;
+  //   · "Net Carbs" or "Saturated" winning the Carbs / Fat slot through a
+  //     sloppy fuzzy match;
+  //   · a blank cell becoming NaN and poisoning a day's totals;
+  //   · a blank Alcohol cell becoming null instead of 0 — Cronometer
+  //     tracks alcohol, so blank genuinely means none;
+  //   · split(',') tearing "Bread, whole wheat" into two fields and
+  //     shifting every macro one column left;
+  //   · alcohol grams surviving the parse but being dropped by the mapper,
+  //     which would silently remove the whole BAC trace from an import.
+  //
+  // Fixtures are synthetic and live in test-scenarios/imports/.
+  // =======================================================================
+  (function importTests() {
+    const FIX = ['cronometer-servings-basic.csv', 'cronometer-servings-notime.csv',
+                 'cronometer-servings-quoted.csv', 'cronometer-exercises-basic.csv',
+                 'malformed.csv'];
+    const T = [];
+    const ok = (name, cond, detail) => T.push({ name, pass: !!cond, detail: detail || '' });
+    const eq = (name, got, want) =>
+      ok(name, got === want, 'got ' + JSON.stringify(got) + ', want ' + JSON.stringify(want));
+    const near = (name, got, want, tol) =>
+      ok(name, Math.abs(got - want) <= (tol === undefined ? 0.01 : tol),
+         'got ' + got + ', want ' + want);
+
+    Promise.all(FIX.map(f =>
+      fetch('../test-scenarios/imports/' + f).then(r => {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.text();
+      }).then(t => [f, t])
+    )).then(pairs => {
+      const F = window.foodImport;
+      const csv = {};
+      pairs.forEach(([f, t]) => { csv[f] = t; });
+      const sum = (list, k) => Math.round(list.reduce((s, e) => s + (+e[k] || 0), 0) * 1e6) / 1e6;
+
+      // ---- 1 · detection ------------------------------------------------
+      const det = f => { const p = F.detectParser(csv[f]); return p ? p.id : null; };
+      eq('detect: servings-basic  -> cronometer-servings', det('cronometer-servings-basic.csv'), 'cronometer-servings');
+      eq('detect: servings-notime -> cronometer-servings', det('cronometer-servings-notime.csv'), 'cronometer-servings');
+      eq('detect: servings-quoted -> cronometer-servings', det('cronometer-servings-quoted.csv'), 'cronometer-servings');
+      eq('detect: exercises       -> cronometer-exercises', det('cronometer-exercises-basic.csv'), 'cronometer-exercises');
+      eq('detect: malformed       -> no parser claims it', det('malformed.csv'), null);
+
+      // ---- 2 · malformed input is rejected cleanly ----------------------
+      // "Cleanly" means a named error a human can act on — not a throw from
+      // deep inside the row loop, and not a silent zero-row success.
+      let rej = null;
+      try { F.parseCronometer(csv['malformed.csv']); } catch (e) { rej = e; }
+      ok('malformed: parseCronometer throws', !!rej, rej ? '' : 'it returned instead of throwing');
+      eq('malformed: error code', rej && rej.code, 'IMPORT_REJECTED');
+      ok('malformed: message names the problem',
+         !!rej && /does not look like a Cronometer servings export/i.test(rej.message),
+         rej ? rej.message : '');
+      ok('malformed: detail lists the missing columns',
+         !!rej && /Missing:.*Day.*Food Name/i.test(rej.detail || ''),
+         rej ? (rej.detail || '').split('\n')[0] : '');
+      ok('malformed: detail echoes what it DID find',
+         !!rej && /Account/.test(rej.detail || ''), rej ? (rej.detail || '') : '');
+      let rejX = null;
+      try { F.parseCronometerExercises(csv['malformed.csv']); } catch (e) { rejX = e; }
+      eq('malformed: exercises parser also rejects', rejX && rejX.code, 'IMPORT_REJECTED');
+
+      // ---- 3 · basic servings: counts + per-day macro sums --------------
+      const b = F.parseCronometer(csv['cronometer-servings-basic.csv']);
+      eq('basic: entry count (summary + spacer rows dropped)', b.entries.length, 12);
+      eq('basic: no row warnings', b.warnings.length, 0);
+      eq('basic: alcohol column detected', b.meta.hasAlcoholColumn, true);
+      eq('basic: time column detected', b.meta.hasTimeColumn, true);
+      eq('basic: energy unit', b.meta.energyUnit, 'kcal');
+
+      // The fixture header deliberately carries decoys. If any of these
+      // three regress, macros silently import from the wrong column.
+      eq('basic: Carbs column, not "Net Carbs"', b.meta.columns.carbs, 'Carbs (g)');
+      eq('basic: Fat column, not "Saturated"/"Trans-Fats"', b.meta.columns.fat, 'Fat (g)');
+      eq('basic: Protein column, not "Cystine"', b.meta.columns.protein, 'Protein (g)');
+      eq('basic: Group column, not "Category"', b.meta.columns.group, 'Group');
+
+      const DAY_EXPECT = {
+        '2026-08-10': { n: 5, kcal: 913, carbs: 117.6, protein: 58.9, fat: 11.3, alcohol: 14 },
+        '2026-08-11': { n: 4, kcal: 867, carbs: 55,    protein: 70,   fat: 41.3, alcohol: 0 },
+        '2026-08-12': { n: 3, kcal: 790, carbs: 60,    protein: 45,   fat: 39,   alcohol: 0 }
+      };
+      Object.keys(DAY_EXPECT).forEach(d => {
+        const e = b.entries.filter(x => x.date === d), w = DAY_EXPECT[d];
+        eq('basic ' + d + ': entries', e.length, w.n);
+        near('basic ' + d + ': kcal', sum(e, 'kcal'), w.kcal);
+        near('basic ' + d + ': carbs', sum(e, 'carbs_g'), w.carbs);
+        near('basic ' + d + ': protein', sum(e, 'protein_g'), w.protein);
+        near('basic ' + d + ': fat', sum(e, 'fat_g'), w.fat);
+        near('basic ' + d + ': alcohol', sum(e, 'alcohol_g'), w.alcohol);
+      });
+
+      // ---- 4 · alcohol survives all the way to a schedule event ---------
+      const beer = b.entries.filter(e => /Beer/i.test(e.name))[0];
+      near('basic: beer parses 14 g alcohol', beer ? beer.alcohol_g : -1, 14);
+      const planB = F.mapEntriesToSchedule(b.entries, { startDate: '2026-08-10', days: 5 });
+      eq('basic: all 12 entries map to events', planB.planned.length, 12);
+      eq('basic: nothing skipped', planB.skipped.length, 0);
+      eq('basic: Day 1 date honoured (not inferred)', planB.inferredDayOne, false);
+      const beerEv = planB.planned.filter(p => /Beer/i.test(p.ev.name))[0];
+      near('basic: beer EVENT carries 14 g alcohol', beerEv ? beerEv.ev.alcohol : -1, 14);
+      eq('basic: beer lands on Day 1', beerEv && beerEv.ev.day, 1);
+      eq('basic: beer keeps its logged 18:45', beerEv && beerEv.ev.time, '18:45');
+      near('basic: day-1 alcohol total across events',
+        planB.planned.filter(p => p.ev.day === 1).reduce((s, p) => s + p.ev.alcohol, 0), 14);
+      eq('basic: no kcal-consistency flags on clean data',
+        planB.planned.reduce((s, p) => s + p.flags.length, 0), 0);
+
+      // ---- 5 · day-range mapping ----------------------------------------
+      // Out-of-range entries must be LISTED, never silently dropped.
+      const planLate = F.mapEntriesToSchedule(b.entries, { startDate: '2026-08-12', days: 5 });
+      eq('range: Day 1 = 08-12 leaves 3 events', planLate.planned.length, 3);
+      eq('range: the other 9 are reported skipped', planLate.skipped.length, 9);
+      ok('range: skip reason says "before Day 1"',
+         planLate.skipped.every(s => /before Day 1/.test(s.reason)),
+         JSON.stringify(planLate.skipped.slice(0, 1)));
+      const planShort = F.mapEntriesToSchedule(b.entries, { startDate: '2026-08-10', days: 1 });
+      eq('range: a 1-day window keeps 5', planShort.planned.length, 5);
+      eq('range: and skips 7', planShort.skipped.length, 7);
+      ok('range: skip reason says "beyond Day 1"',
+         planShort.skipped.every(s => /beyond Day 1/.test(s.reason)),
+         JSON.stringify(planShort.skipped.slice(0, 1)));
+      const planInfer = F.mapEntriesToSchedule(b.entries, { startDate: '', days: 5 });
+      eq('range: no start date -> earliest becomes Day 1', planInfer.dayOne, '2026-08-10');
+      eq('range: and it says so', planInfer.inferredDayOne, true);
+      eq('range: inferring loses nothing', planInfer.planned.length, 12);
+
+      // ---- 6 · merge toggle ---------------------------------------------
+      // Merging must be a pure regrouping: day totals cannot move.
+      const planM = F.mapEntriesToSchedule(b.entries, { startDate: '2026-08-10', days: 5, merge: true });
+      eq('merge: 12 foods collapse to 9 group meals', planM.planned.length, 9);
+      const d1m = planM.planned.filter(p => p.ev.day === 1);
+      eq('merge: Day 1 has 3 groups', d1m.length, 3);
+      near('merge: Day 1 kcal unchanged', d1m.reduce((s, p) => s + p.ev.kcal, 0), 913);
+      near('merge: Day 1 carbs unchanged', d1m.reduce((s, p) => s + p.ev.carbs, 0), 117.6);
+      near('merge: Day 1 protein unchanged', d1m.reduce((s, p) => s + p.ev.protein, 0), 58.9);
+      near('merge: Day 1 fat unchanged', d1m.reduce((s, p) => s + p.ev.fat, 0), 11.3);
+      near('merge: Day 1 alcohol unchanged', d1m.reduce((s, p) => s + p.ev.alcohol, 0), 14);
+      const dinner = d1m.filter(p => /dinner/i.test(p.ev.name))[0];
+      near('merge: Dinner = rice + beer kcal', dinner ? dinner.ev.kcal : -1, 403);
+      near('merge: Dinner keeps the beer alcohol', dinner ? dinner.ev.alcohol : -1, 14);
+      eq('merge: Dinner keeps the earliest logged time', dinner && dinner.ev.time, '18:45');
+      eq('merge: merged event names both sources',
+         dinner ? dinner.sources.length : -1, 2);
+
+      // ---- 7 · no Time column -> meal-slot defaults ----------------------
+      const n = F.parseCronometer(csv['cronometer-servings-notime.csv']);
+      eq('notime: entry count', n.entries.length, 9);
+      eq('notime: no Time column found', n.meta.hasTimeColumn, false);
+      ok('notime: every entry has time === null',
+         n.entries.every(e => e.time === null),
+         JSON.stringify(n.entries.map(e => e.time)));
+      const planN = F.mapEntriesToSchedule(n.entries, { startDate: '2026-08-10', days: 5 });
+      const at = (day, name) => {
+        const p = planN.planned.filter(x => x.ev.day === day && x.ev.name === name)[0];
+        return p ? p.ev.time : '(missing)';
+      };
+      eq('default time: Breakfast -> 07:30', at(1, 'Oatmeal cooked'), '07:30');
+      eq('default time: Lunch     -> 12:30', at(1, 'Chicken salad'), '12:30');
+      eq('default time: Snacks    -> 15:00', at(1, 'Apple medium'), '15:00');
+      eq('default time: Dinner    -> 18:30', at(1, 'Pasta with sauce'), '18:30');
+      // The second DISTINCT snack group on the same day, per the spec.
+      eq('default time: 2nd snack group same day -> 21:00', at(1, 'Cottage cheese'), '21:00');
+      eq('default time: no group at all -> 12:00', at(2, 'Protein shake'), '12:00');
+      ok('notime: the ungrouped entry is flagged, not hidden',
+         planN.planned.some(p => p.ev.name === 'Protein shake' && p.flags.length > 0));
+      // Day 2 starts a fresh snack sequence — occurrence is per-day.
+      eq('default time: Day 2 breakfast unaffected', at(2, 'Toast with butter'), '07:30');
+      // Overridable, since the review screen exposes these as inputs.
+      const planNCustom = F.mapEntriesToSchedule(n.entries,
+        { startDate: '2026-08-10', days: 5, defaultTimes: { breakfast: '06:00', snack2: '22:15' } });
+      const atC = (day, name) => {
+        const p = planNCustom.planned.filter(x => x.ev.day === day && x.ev.name === name)[0];
+        return p ? p.ev.time : '(missing)';
+      };
+      eq('default time: breakfast override honoured', atC(1, 'Oatmeal cooked'), '06:00');
+      eq('default time: snack2 override honoured', atC(1, 'Cottage cheese'), '22:15');
+      eq('default time: unoverridden slot keeps its default', atC(1, 'Pasta with sauce'), '18:30');
+
+      // ---- 8 · quoted fields + blank cells ------------------------------
+      const q = F.parseCronometer(csv['cronometer-servings-quoted.csv']);
+      eq('quoted: entry count', q.entries.length, 8);
+      const names = q.entries.map(e => e.name);
+      ok('quoted: "Bread, whole wheat" stays one field',
+         names.indexOf('Bread, whole wheat') >= 0, JSON.stringify(names));
+      ok('quoted: two commas survive too ("Cheese, cheddar, sharp")',
+         names.indexOf('Cheese, cheddar, sharp') >= 0, JSON.stringify(names));
+      ok('quoted: doubled quotes unescape',
+         names.indexOf('Kellogg\'s "Special K", original') >= 0, JSON.stringify(names));
+      // The real damage from a split(',') parse is a one-column shift, so
+      // check the macros of a comma-name row, not just the name itself.
+      const bread = q.entries.filter(e => e.name === 'Bread, whole wheat')[0];
+      near('quoted: comma-name row keeps its kcal', bread ? bread.kcal : -1, 140);
+      near('quoted: comma-name row keeps its carbs', bread ? bread.carbs_g : -1, 24);
+      near('quoted: comma-name row keeps its protein', bread ? bread.protein_g : -1, 8);
+      near('quoted: comma-name row keeps its fat', bread ? bread.fat_g : -1, 2);
+
+      const yog = q.entries.filter(e => e.name === 'Yogurt, plain, low-fat')[0];
+      near('blank cell: blank Fat -> 0', yog ? yog.fat_g : -1, 0);
+      ok('blank cell: blank Fat is a number, not NaN',
+         !!yog && typeof yog.fat_g === 'number' && isFinite(yog.fat_g));
+      ok('blank cell: blank Alcohol -> 0, NOT null (Cronometer tracks it)',
+         q.entries.every(e => e.alcohol_g === 0),
+         JSON.stringify(q.entries.map(e => e.alcohol_g)));
+      near('quoted: totals kcal', sum(q.entries, 'kcal'), 870);
+      near('quoted: totals carbs', sum(q.entries, 'carbs_g'), 130);
+      near('quoted: totals protein', sum(q.entries, 'protein_g'), 56);
+      near('quoted: totals fat', sum(q.entries, 'fat_g'), 38.4);
+      // Unreadable cell -> 0 + a warning, and the file still imports.
+      eq('quoted: one row warning for the unreadable Carbs cell', q.warnings.length, 1);
+      ok('quoted: the warning names the row and column',
+         q.warnings.length === 1 && /Nuts/.test(q.warnings[0].text) && /Carbs/.test(q.warnings[0].text),
+         q.warnings.length ? q.warnings[0].text : '');
+
+      // ---- 9 · kcal consistency check ------------------------------------
+      const planQ = F.mapEntriesToSchedule(q.entries, { startDate: '2026-08-10', days: 5 });
+      const flagged = planQ.planned.filter(p => p.flags.some(f => /kcal/.test(f.text)));
+      eq('kcal check: exactly one entry flagged', flagged.length, 1);
+      eq('kcal check: it is the 0-kcal-with-macros row',
+         flagged.length === 1 ? flagged[0].ev.name : '(none)', 'Mystery item, homemade');
+      ok('kcal check: a genuinely empty 0-kcal row is NOT flagged',
+         !planQ.planned.some(p => p.ev.name === 'Zero-cal drink, diet' && p.flags.length));
+      ok('kcal check: a 12% gap stays under the 15% threshold',
+         !planQ.planned.some(p => p.ev.name === 'Yogurt, plain, low-fat' &&
+                                  p.flags.some(f => /kcal/.test(f.text))));
+
+      // ---- 10 · exercises ------------------------------------------------
+      const x = F.parseCronometerExercises(csv['cronometer-exercises-basic.csv']);
+      eq('exercise: entry count', x.entries.length, 4);
+      ok('exercise: no export start time', x.entries.every(e => e.time === null));
+      near('exercise: minutes parsed', x.entries[0].minutes, 45);
+      near('exercise: calories burned captured', x.entries[0].kcalBurned, 320);
+
+      // Unclassified names are held BACK, not guessed at.
+      const planX0 = F.mapEntriesToSchedule(x.entries, { startDate: '2026-08-10', days: 5 });
+      eq('exercise: nothing imports before classification', planX0.planned.length, 0);
+      eq('exercise: 3 distinct names need classifying', planX0.unclassified.length, 3);
+      ok('exercise: each distinct name asked for once',
+         planX0.unclassified.indexOf('Weight Training') >= 0 &&
+         planX0.unclassified.indexOf('Running') >= 0 &&
+         planX0.unclassified.indexOf('Cycling') >= 0,
+         JSON.stringify(planX0.unclassified));
+
+      const XMAP = {
+        'Weight Training': { type: 'resistance', intensity: 'hard' },
+        'Running': { type: 'aerobic', intensity: 'vigorous' },
+        'Cycling': { type: 'aerobic', intensity: 'moderate' }
+      };
+      const planX = F.mapEntriesToSchedule(x.entries,
+        { startDate: '2026-08-10', days: 5, exercise: { map: XMAP } });
+      eq('exercise: all 4 map once classified', planX.planned.length, 4);
+      eq('exercise: none left unclassified', planX.unclassified.length, 0);
+      const wt = planX.planned.filter(p => p.ev.type === 'resistance')[0];
+      eq('exercise: resistance type', wt && wt.ev.type, 'resistance');
+      eq('exercise: intensity carried through', wt && wt.ev.intensity, 'hard');
+      near('exercise: duration = logged minutes', wt ? wt.ev.duration : -1, 45);
+      eq('exercise: default start 17:00', wt && wt.ev.start, '17:00');
+      ok('exercise: start time is overridable',
+         F.mapEntriesToSchedule(x.entries, { startDate: '2026-08-10', days: 5,
+           exercise: { map: XMAP, defaultStart: '06:15' } }).planned[0].ev.start === '06:15');
+      ok('exercise: the ignored "calories burned" is called out',
+         planX.planned.every(p => p.flags.some(f => /computes its own cost/i.test(f.text))));
+      // Vocabulary translation: resistance has no "vigorous", aerobic no "hard".
+      const planXV = F.mapEntriesToSchedule(x.entries, { startDate: '2026-08-10', days: 5,
+        exercise: { map: { 'Weight Training': { type: 'resistance', intensity: 'vigorous' },
+                           'Running': { type: 'aerobic', intensity: 'hard' },
+                           'Cycling': { type: 'aerobic', intensity: 'moderate' } } } });
+      eq('exercise: resistance "vigorous" -> "hard"',
+         planXV.planned.filter(p => p.ev.type === 'resistance')[0].ev.intensity, 'hard');
+      eq('exercise: aerobic "hard" -> "vigorous"',
+         planXV.planned.filter(p => p.sources[0] === 'Running')[0].ev.intensity, 'vigorous');
+
+      // ---- 11 · registry extension point ---------------------------------
+      // MyFitnessPal / FatSecret arrive through here. Proving a third parser
+      // slots in without touching the mapper is the point of the pattern.
+      const before = F.listImportParsers().length;
+      F.registerImportParser({
+        id: '__selftest', label: 'Self test', source: 'Test', kind: 'food',
+        detect: headers => (headers.join(',') === 'zzz' ? 9 : 0),
+        parse: () => ({ entries: [{ kind: 'food', date: '2026-08-10', time: null,
+          mealSlot: 'Lunch', name: 'Stub', kcal: 100, carbs_g: 10, protein_g: 5,
+          fat_g: 4, alcohol_g: null }], warnings: [], meta: {} })
+      });
+      eq('registry: a new parser registers', F.listImportParsers().length, before + 1);
+      const stub = F.mapEntriesToSchedule(
+        F.listImportParsers().filter(p => p.id === '__selftest')[0].parse().entries,
+        { startDate: '2026-08-10', days: 5 });
+      eq('registry: a foreign parser reuses the mapper unchanged', stub.planned.length, 1);
+      eq('registry: and gets slot defaults for free', stub.planned[0].ev.time, '12:30');
+      near('registry: alcohol_g null -> 0 g on the event', stub.planned[0].ev.alcohol, 0);
+      eq('registry: re-registering an id replaces rather than duplicates',
+         (F.registerImportParser({ id: '__selftest', parse: () => ({ entries: [], warnings: [] }) }),
+          F.listImportParsers().length), before + 1);
+
+      // ---- render --------------------------------------------------------
+      const fails = T.filter(t => !t.pass);
+      let h = '<h2>Food-log CSV import (Cronometer)</h2>';
+      h += '<div class="verdict ' + (fails.length ? 'bad' : 'ok') + '">' +
+        (fails.length ? '✗ ' + fails.length + ' of ' + T.length + ' import checks FAILED.'
+                      : '✓ All ' + T.length + ' import checks passed.') + '</div>';
+      h += '<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>';
+      // Passing rows are collapsed to keep the failures readable; the full
+      // list is always in window.__results.imports.
+      for (const t of (fails.length ? fails : T)) {
+        h += '<tr><td>' + t.name + '</td><td class="' + (t.pass ? 'pass' : 'fail') + '">' +
+             (t.pass ? 'PASS' : 'FAIL') + '</td><td class="info">' + t.detail + '</td></tr>';
+      }
+      h += '</table>';
+      document.getElementById('out').insertAdjacentHTML('beforeend', h);
+
+      window.__results.imports = { pass: fails.length === 0, total: T.length,
+        failed: fails.map(f => ({ name: f.name, detail: f.detail })) };
+      window.__results.pass = window.__results.pass && fails.length === 0;
+    }).catch(e => {
+      document.getElementById('out').insertAdjacentHTML('beforeend',
+        '<h2>Food-log CSV import (Cronometer)</h2><div class="verdict bad">Could not load the ' +
+        'import fixtures (' + e.message + ').<br />These checks need the page served over HTTP — ' +
+        'a <code>file://</code> open cannot fetch them.</div>');
+      window.__results.imports = { skipped: true, error: e.message };
+    });
+  })();
 })();
 </script>
 </body>

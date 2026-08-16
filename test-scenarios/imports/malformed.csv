@@ -1,0 +1,4 @@
+Account,Balance,Notes,Reference
+Checking,1204.55,Opening balance,TX-0001
+Savings,8890.10,Transfer in,TX-0002
+Checking,-45.20,Card purchase,TX-0003
