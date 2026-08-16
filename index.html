@@ -167,8 +167,8 @@
              that one reads THIS app's own layout, this one reads a foreign
              export and always stops at a review screen first. -->
         <div class="csv-row">
-          <label class="filebtn foodlog" title="Import a Cronometer export — Profile ▸ Account ▸ Export Data ▸ Export Servings (or Export Exercises). You get a review screen before anything is added.">Import food log…
-            <input id="foodLogImport" type="file" accept=".csv,text/csv,text/plain" hidden />
+          <label class="filebtn foodlog" title="Import a Cronometer export — Profile ▸ Account ▸ Export Data. Pick Servings, Exercises, or select BOTH a Daily Nutrition and a Servings file together when your export splits nutrition from times. You get a review screen before anything is added.">Import food log…
+            <input id="foodLogImport" type="file" accept=".csv,text/csv,text/plain" multiple hidden />
           </label>
           <span id="foodLogStatus" class="csv-status" role="status" aria-live="polite"></span>
         </div>

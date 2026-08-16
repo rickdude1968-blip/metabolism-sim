@@ -81,7 +81,7 @@ the rest by exact name, so renaming or separating them breaks the app.
 | `index.html` | The page itself — layout, input controls, chart containers. **This is the file you open.** |
 | `simulation.js` | The metabolic model. Runs the 5-minute-step simulation and returns 1,440 timesteps (5 days) of data. The number of days is the `DAYS` constant near the top — change it to simulate a different span. |
 | `charts.js` | Draws the six charts using Chart.js, plus the meal/exercise/sleep shading and the draggable "now" cursor. |
-| `importers.js` | Reads food-log exports from other apps (Cronometer today) and turns them into schedule events. Self-contained and DOM-free, so new sources plug in here without touching the rest. |
+| `importers.js` | Reads food-log exports from other apps (Cronometer today), including the two-file Daily Nutrition + Servings variant, and turns them into schedule events. Self-contained and DOM-free, so new sources plug in here without touching the rest. |
 | `app.js` | Connects the buttons, sliders, and schedule builder to the model; writes the status panel; handles files and autosave. |
 | `styles.css` | Colors, layout, and styling. |
 | `chart.umd.min.js` | The Chart.js graphing library, bundled locally so no internet is needed. |
@@ -299,13 +299,51 @@ On the Cronometer website (not the phone app):
 3. **Export Servings** for food, or **Export Exercises** for training.
 
 Export the CSV as-is — do not delete or rename the header row, which is how
-every column is located. You can import the two files one after the other.
+every column is located. You can import the food and exercise files one after
+the other.
+
+### One file or two
+
+Depending on your account settings, a Servings export may or may not include
+the nutrient columns. Both shapes are handled:
+
+| What you have | What to select |
+|---------------|----------------|
+| A Servings export **with** nutrients (Energy, Carbs, Fat, Protein…) | That file on its own. |
+| A Servings export with **only** Day, Time, Group, Food Name, Amount, Category | That file **together with** a **Daily Nutrition** export. |
+| An Exercises export | That file on its own. |
+
+The slim Servings export knows *when* you ate but not what it was worth; the
+Daily Nutrition export knows *what* you ate but records no times. Neither can
+make a meal alone, so select **both files at once** on the Import button and
+they are joined on **(Date, Group)** — macros from the nutrition file, clock
+time from the earliest food logged in that group. One meal event comes out per
+group. File order does not matter.
+
+When exporting Daily Nutrition, turn on **"Include diary group rows."** Without
+it the file has one row per day rather than one per meal, and a day total
+cannot be split across Breakfast, Lunch and Dinner without inventing numbers.
+In that case:
+
+- A day with exactly **one** meal group is imported as a single meal at that
+  group's time, and the review screen says it made that assumption.
+- A day with **several** groups is listed as **not imported**, naming the
+  groups it could not choose between and telling you to re-export with group
+  rows enabled. It is refused rather than guessed at.
+
+If a group appears in one file but not the other, it is reported on the review
+screen — a group with nutrition but no logged foods still imports (placed at
+its meal-slot default time); a group with foods but no nutrition cannot be
+imported at all and is listed as such.
+
+Cronometer writes a day-total row alongside its group rows. That row is
+detected and ignored, because counting it as well would double the day.
 
 ### The review screen
 
 | Section | What it is for |
 |---------|----------------|
-| Summary | Which file, which importer read it, how many rows became how many events, and which calendar date is being treated as Day 1. |
+| Summary | Which file(s), which importer read them, how many source rows became how many events, and which calendar date is being treated as Day 1. |
 | Import options | The merge toggle and the default times (below). |
 | Classify these exercises | Only for exercise imports — see below. |
 | Warnings | Rows that could not be read, entries placed by guesswork, calorie mismatches, and anything falling outside the 5-day window. Nothing is dropped without appearing here. |
@@ -387,10 +425,18 @@ because importing the same file twice will otherwise quietly double that day.
 ### If the file is rejected
 
 You'll get a panel naming what was missing and listing the columns actually
-found. The usual cause is exporting the wrong report — a Servings export needs
-`Day` and `Food Name`, an Exercises export needs `Day`, `Exercise` and
-`Minutes`. Editing the header row in a spreadsheet before importing will also
-do it.
+found. The usual causes:
+
+- **Wrong report exported.** A Servings export needs `Day` and `Food Name`; a
+  Daily Nutrition export needs `Date` and the macro columns; an Exercises
+  export needs `Day`, `Exercise` and `Minutes`.
+- **A slim Servings export on its own.** It has times but no nutrition, so it
+  asks you to add the Daily Nutrition export and select both together.
+- **Two files that don't pair.** Only a Daily Nutrition file plus a Servings
+  file are joined; the panel shows how each file was read. Import anything
+  else one file at a time.
+- **An edited header row.** Renaming or deleting header cells in a spreadsheet
+  breaks column matching — export a fresh copy.
 
 ### Adding another source
 
@@ -808,12 +854,16 @@ It covers three areas:
 2. **Post-workout glycogen resynthesis** — two fixtures at different carb
    doses, checking the muscle refill, that mass is conserved, and that the
    larger dose stores more.
-3. **Food-log import** — 124 checks over the fixtures in
+3. **Food-log import** — 189 checks over the fixtures in
    `test-scenarios/imports/`: column matching against decoy headers
    (`Net Carbs`, `Saturated`, `Cystine`), quoted food names containing commas,
    blank cells becoming 0 rather than NaN, alcohol grams reaching the schedule
    event, default-time assignment, day-range mapping, the merge toggle, and a
-   clean rejection for a file that isn't a Cronometer export.
+   clean rejection for a file that isn't a Cronometer export. The two-file
+   variant adds the (Date, Group) join: per-group macros, earliest-time
+   selection, `3:43 PM` mapping to `15:43`, the day-total row not being
+   double-counted, groups present in only one file, and the unresolvable-day
+   refusal when Daily Nutrition was exported without group rows.
 
 To run it, serve this folder and open the page:
 

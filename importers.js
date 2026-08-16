@@ -413,6 +413,261 @@
   }
 
   // =======================================================================
+  //  2b · The two-file variant: Daily Nutrition + slim Servings
+  // =======================================================================
+  // Cronometer can split what we need across two exports:
+  //
+  //   File A  "Daily Nutrition"  — Date (+ Group, if "Include diary group
+  //                                rows" is on) and the full nutrient set.
+  //                                NO times.
+  //   File B  "Servings" (slim)  — Day, Time, Group, Food Name, Amount,
+  //                                Category. NO nutrients.
+  //
+  // Neither is usable alone: A knows what was eaten but not when, B knows
+  // when but not what it was worth. They are joined on (Date, Group), which
+  // is the only key both files carry.
+
+  const DAILY_NUTRITION_ALIASES = {
+    date:    ['date', 'day'],
+    group:   ['group', 'meal'],
+    kcal:    ['energy', 'calories', 'kcal'],
+    carbs:   ['carbs', 'carbohydrate', 'carbohydrates', 'total carbs'],
+    protein: ['protein'],
+    fat:     ['fat', 'total fat'],
+    alcohol: ['alcohol', 'ethanol']
+  };
+
+  /** File A — Cronometer "Daily Nutrition" export. */
+  function parseCronometerDailyNutrition(csvText) {
+    const rows = parseCSV(String(csvText == null ? '' : csvText));
+    if (!rows.length) throw ImportError('That file is empty.');
+    const headers = rows[0];
+    const col = matchHeaders(headers, DAILY_NUTRITION_ALIASES);
+
+    const missing = [];
+    if (!col.date) missing.push('Date');
+    if (!col.carbs && !col.protein && !col.fat) missing.push('Carbs / Protein / Fat');
+    if (missing.length) {
+      throw ImportError('This does not look like a Cronometer daily-nutrition export.',
+        'Missing: ' + missing.join(', ') + '.\nColumns found: ' +
+        headers.map(h => String(h).trim()).filter(Boolean).slice(0, 12).join(', '));
+    }
+    const kJ = !!(col.kcal && /\bkj\b/i.test(col.kcal.raw));
+
+    const entries = [], warnings = [];
+    const cell = (row, c) => (c && row[c.idx] !== undefined ? String(row[c.idx]).trim() : '');
+    let hasGroupRows = false;
+
+    for (let r = 1; r < rows.length; r++) {
+      const row = rows[r], lineNo = r + 1;
+      const dateRaw = cell(row, col.date);
+      if (!dateRaw || SUMMARY_RE.test(dateRaw)) continue;
+      const date = parseDate(dateRaw);
+      if (!date) {
+        warnings.push({ row: lineNo, text: 'Row ' + lineNo + ': could not read the date "' +
+                        dateRaw + '" — row skipped.' });
+        continue;
+      }
+      const bad = [];
+      const numAt = (c, label) => { const n = toNumber(cell(row, c)); if (!n.ok) bad.push(label); return n.v; };
+      let kcal = numAt(col.kcal, 'Energy');
+      if (kJ) kcal = kcal / 4.184;
+      const group = cell(row, col.group);
+      if (group) hasGroupRows = true;
+      entries.push({
+        kind: 'nutrition', date: date, group: group || null,
+        kcal: kcal, carbs_g: numAt(col.carbs, 'Carbs'),
+        protein_g: numAt(col.protein, 'Protein'), fat_g: numAt(col.fat, 'Fat'),
+        alcohol_g: col.alcohol ? numAt(col.alcohol, 'Alcohol') : null,
+        sourceRow: lineNo
+      });
+      if (bad.length) {
+        warnings.push({ row: lineNo, text: 'Row ' + lineNo + ' (' + date +
+          (group ? ' · ' + group : '') + '): ' + bad.join(', ') +
+          ' could not be read as numbers — counted as 0.' });
+      }
+    }
+    if (!entries.length) {
+      throw ImportError('No nutrition rows were found in that file.',
+        'The header row matched, but every data row was blank, a summary line, or undated.');
+    }
+    return { entries: entries, warnings: warnings,
+             meta: { source: 'Cronometer', kind: 'nutrition', hasGroupRows: hasGroupRows,
+                     energyUnit: kJ ? 'kJ' : 'kcal',
+                     columns: Object.keys(col).reduce((o, k) => { o[k] = col[k].raw; return o; }, {}) } };
+  }
+
+  const SLIM_SERVING_ALIASES = {
+    date:   ['day', 'date'],
+    time:   ['time'],
+    group:  ['group', 'meal', 'category'],
+    name:   ['food name', 'food', 'name'],
+    amount: ['amount', 'quantity', 'serving']
+  };
+
+  /** File B — Cronometer "Servings" export with nutrients switched off. */
+  function parseCronometerServingsSlim(csvText) {
+    const rows = parseCSV(String(csvText == null ? '' : csvText));
+    if (!rows.length) throw ImportError('That file is empty.');
+    const headers = rows[0];
+    const col = matchHeaders(headers, SLIM_SERVING_ALIASES);
+
+    const missing = [];
+    if (!col.date) missing.push('Day');
+    if (!col.time) missing.push('Time');
+    if (!col.name) missing.push('Food Name');
+    if (missing.length) {
+      throw ImportError('This does not look like a Cronometer servings export.',
+        'Missing: ' + missing.join(', ') + '.\nColumns found: ' +
+        headers.map(h => String(h).trim()).filter(Boolean).slice(0, 12).join(', '));
+    }
+
+    const entries = [], warnings = [];
+    const cell = (row, c) => (c && row[c.idx] !== undefined ? String(row[c.idx]).trim() : '');
+    for (let r = 1; r < rows.length; r++) {
+      const row = rows[r], lineNo = r + 1;
+      const name = cell(row, col.name), dateRaw = cell(row, col.date);
+      if (!name) continue;
+      if (SUMMARY_RE.test(name) || SUMMARY_RE.test(dateRaw)) continue;
+      const date = parseDate(dateRaw);
+      if (!date) {
+        warnings.push({ row: lineNo, text: 'Row ' + lineNo + ' (' + name + '): could not read the date "' +
+                        dateRaw + '" — row skipped.' });
+        continue;
+      }
+      const time = parseTime(cell(row, col.time));
+      if (!time && cell(row, col.time)) {
+        warnings.push({ row: lineNo, text: 'Row ' + lineNo + ' (' + name + '): could not read the time "' +
+                        cell(row, col.time) + '" — it cannot help place its meal group.' });
+      }
+      entries.push({ kind: 'timing', date: date, time: time, group: cell(row, col.group) || null,
+                     name: name, amount: cell(row, col.amount), sourceRow: lineNo });
+    }
+    if (!entries.length) {
+      throw ImportError('No food rows were found in that file.',
+        'The header row matched, but every data row was blank, a summary line, or undated.');
+    }
+    return { entries: entries, warnings: warnings,
+             meta: { source: 'Cronometer', kind: 'timing', hasTimeColumn: true } };
+  }
+
+  /**
+   * joinNutritionAndTiming(nutritionResult, timingResult) -> parser-shaped
+   * result, so everything downstream treats it like any other import.
+   *
+   * The join is on (Date, Group), matched case-insensitively because the two
+   * exports do not guarantee identical casing. One merged meal event comes
+   * out per group: macros from File A, clock time from the EARLIEST serving
+   * logged in that group in File B.
+   *
+   * Anything that fails to match is reported, never dropped in silence —
+   * with the single, explicit exception of a day that cannot be resolved at
+   * all (see below), which is listed as unimported with the fix to apply.
+   */
+  function joinNutritionAndTiming(nutritionResult, timingResult) {
+    const nut = (nutritionResult && nutritionResult.entries) || [];
+    const tim = (timingResult && timingResult.entries) || [];
+    const entries = [], warnings = [], unresolvedDays = [];
+
+    // date -> groupKey -> { label, earliest, foods }
+    const idx = {};
+    for (const t of tim) {
+      const d = idx[t.date] || (idx[t.date] = {});
+      const key = String(t.group || '').trim().toLowerCase();
+      const g = d[key] || (d[key] = { label: String(t.group || '').trim(), earliest: null, foods: [] });
+      if (t.name) g.foods.push(t.name);
+      if (t.time && (!g.earliest || t.time < g.earliest)) g.earliest = t.time;
+    }
+
+    const hasGroupRows = {};
+    for (const n of nut) if (String(n.group || '').trim()) hasGroupRows[n.date] = true;
+
+    const used = {}, totalNoted = {};
+    const mk = (date, time, group, name, n, foods) => ({
+      kind: 'food', date: date, time: time || null, mealSlot: group || null,
+      name: name || 'Meal', amount: '',
+      kcal: n.kcal, carbs_g: n.carbs_g, protein_g: n.protein_g, fat_g: n.fat_g,
+      alcohol_g: n.alcohol_g, foods: foods || []
+    });
+
+    for (const n of nut) {
+      const label = String(n.group || '').trim();
+
+      // With group rows on, Cronometer still writes a group-less row holding
+      // the day's totals. Counting it as well would double the whole day.
+      if (!label && hasGroupRows[n.date]) {
+        if (!totalNoted[n.date]) {
+          totalNoted[n.date] = true;
+          warnings.push({ text: n.date + ': the day-total row was ignored, because that day also has ' +
+            'per-group rows and counting both would double the day.' });
+        }
+        continue;
+      }
+
+      if (label) {
+        const key = label.toLowerCase();
+        const g = (idx[n.date] || {})[key];
+        if (g) used[n.date + '|' + key] = true;
+        else {
+          warnings.push({ text: n.date + ' · ' + label + ': has nutrition, but the servings file logs no ' +
+            'food in that group — it was placed at the default time for its meal slot.' });
+        }
+        entries.push(mk(n.date, g ? g.earliest : null, label, label, n, g ? g.foods : []));
+        continue;
+      }
+
+      // Day-level row: File A was exported without "Include diary group rows".
+      const keys = Object.keys(idx[n.date] || {});
+      if (keys.length === 1) {
+        const g = idx[n.date][keys[0]];
+        used[n.date + '|' + keys[0]] = true;
+        warnings.push({ text: n.date + ': the nutrition file has only a day total, but the servings file ' +
+          'shows a single meal group (' + (g.label || 'ungrouped') + '), so the day was joined as one ' +
+          'meal at ' + (g.earliest || 'its default time') + '.' });
+        entries.push(mk(n.date, g.earliest, g.label, g.label || 'All food', n, g.foods));
+      } else if (!keys.length) {
+        warnings.push({ text: n.date + ': nutrition with no matching servings rows at all — imported as one ' +
+          'meal at the default time.' });
+        entries.push(mk(n.date, null, null, 'All food', n, []));
+      } else {
+        // Genuinely ambiguous: a day total cannot be split across groups
+        // without inventing numbers, so it is refused rather than guessed.
+        const labels = keys.map(k => idx[n.date][k].label || 'ungrouped');
+        keys.forEach(k => { used[n.date + '|' + k] = true; });   // don't also report these as orphans
+        unresolvedDays.push({ date: n.date, groups: labels });
+        // level 'error' rather than 'warn': this one means a whole day did
+        // not make it, which must not read like the softer notes around it.
+        warnings.push({ level: 'error',
+          text: n.date + ' was NOT imported: the nutrition file has only a day total, but that ' +
+          'day has ' + keys.length + ' meal groups (' + labels.join(', ') + '). A day total cannot be split ' +
+          'across them without inventing numbers. Re-export Daily Nutrition with "Include diary group rows" ' +
+          'enabled and import again.' });
+      }
+    }
+
+    const orphans = [];
+    Object.keys(idx).forEach(d => Object.keys(idx[d]).forEach(k => {
+      if (!used[d + '|' + k]) orphans.push(d + ' · ' + (idx[d][k].label || 'ungrouped'));
+    }));
+    if (orphans.length) {
+      warnings.push({ level: 'error',
+        text: orphans.length + ' meal group' + (orphans.length !== 1 ? 's' : '') +
+        ' in the servings file had no matching nutrition row, so ' +
+        (orphans.length !== 1 ? 'they were' : 'it was') + ' not imported: ' + orphans.join('; ') + '.' });
+    }
+
+    return {
+      entries: entries, warnings: warnings,
+      meta: { source: 'Cronometer', kind: 'food', joined: true,
+              hasGroupRows: Object.keys(hasGroupRows).length > 0,
+              hasAlcoholColumn: !!(nutritionResult && nutritionResult.meta && nutritionResult.meta.columns &&
+                                   nutritionResult.meta.columns.alcohol),
+              unresolvedDays: unresolvedDays, orphanGroups: orphans,
+              nutritionRows: nut.length, timingRows: tim.length }
+    };
+  }
+
+  // =======================================================================
   //  Parser registry — the extension point for the next source
   // =======================================================================
   // MyFitnessPal and FatSecret plug in HERE and nowhere else. A parser owns
@@ -471,18 +726,52 @@
     detect: headers => {
       const col = matchHeaders(headers, SERVING_ALIASES);
       if (!has(col, 'date') || !has(col, 'name')) return 0;
-      // "Food Name" + a group column is the servings-export signature. Score
-      // above the exercises parser so a file carrying both cannot be taken
-      // for an exercise log.
-      let s = 1;
-      if (has(col, 'kcal')) s++;
-      if (has(col, 'group')) s++;
-      if (has(col, 'carbs') || has(col, 'protein') || has(col, 'fat')) s++;
+      // Nutrients are what make a servings export self-sufficient. Without
+      // them it is the SLIM variant, which is useless on its own and belongs
+      // to the two-file path — so this parser must stand down rather than
+      // claim the file and then throw on parse.
+      const macro = has(col, 'carbs') || has(col, 'protein') || has(col, 'fat');
+      if (!macro && !has(col, 'kcal')) return 0;
       // An exercise export also has Day + a name-ish column; Minutes is what
       // tells them apart, so stand down when it is present and macros are not.
       const ex = matchHeaders(headers, EXERCISE_ALIASES);
-      if (has(ex, 'minutes') && !has(col, 'carbs') && !has(col, 'protein') && !has(col, 'fat')) return 0;
+      if (has(ex, 'minutes') && !macro) return 0;
+      let s = 1;
+      if (has(col, 'kcal')) s++;
+      if (has(col, 'group')) s++;
+      if (macro) s++;
       return s;
+    }
+  });
+  registerImportParser({
+    id: 'cronometer-servings-slim', label: 'Cronometer — Servings (times only)', source: 'Cronometer',
+    kind: 'timing', parse: parseCronometerServingsSlim,
+    detect: headers => {
+      const col = matchHeaders(headers, SLIM_SERVING_ALIASES);
+      if (!has(col, 'date') || !has(col, 'time') || !has(col, 'name')) return 0;
+      // Defined by what it LACKS: any nutrient column means the full
+      // servings parser owns this file instead.
+      const full = matchHeaders(headers, SERVING_ALIASES);
+      if (has(full, 'kcal') || has(full, 'carbs') || has(full, 'protein') || has(full, 'fat')) return 0;
+      return has(col, 'group') ? 4 : 3;
+    }
+  });
+  registerImportParser({
+    id: 'cronometer-daily-nutrition', label: 'Cronometer — Daily Nutrition', source: 'Cronometer',
+    kind: 'nutrition', parse: parseCronometerDailyNutrition,
+    detect: headers => {
+      const col = matchHeaders(headers, DAILY_NUTRITION_ALIASES);
+      if (!has(col, 'date')) return 0;
+      // Rows are days, not foods — a Food Name column means this is a
+      // servings export, whichever variant.
+      const full = matchHeaders(headers, SERVING_ALIASES);
+      if (has(full, 'name')) return 0;
+      // Real macros, not merely an energy column: an exercise export has
+      // "Calories Burned", which would otherwise read as nutrition.
+      if (!has(col, 'carbs') && !has(col, 'protein') && !has(col, 'fat')) return 0;
+      const ex = matchHeaders(headers, EXERCISE_ALIASES);
+      if (has(ex, 'minutes')) return 0;
+      return has(col, 'group') ? 4 : 3;
     }
   });
   registerImportParser({
@@ -666,7 +955,10 @@
         ev: { type: 'meal', day: day, time: time, name: e.name,
               kcal: round2(e.kcal), carbs: round2(e.carbs_g), protein: round2(e.protein_g),
               fat: round2(e.fat_g), alcohol: round2(e.alcohol_g || 0) },
-        date: e.date, sources: [e.name], explicitTime: !!e.time,
+        // A joined group carries the foods it was built from, so the review
+        // screen can say what is inside an event named only "Breakfast".
+        date: e.date, sources: (e.foods && e.foods.length) ? e.foods.slice() : [e.name],
+        explicitTime: !!e.time,
         slot: slot, group: e.mealSlot || '', amount: e.amount || '', flags: flags
       });
     }
@@ -750,6 +1042,9 @@
     toNumber: toNumber, parseTime: parseTime, parseDate: parseDate, daysBetween: daysBetween,
     // parsers
     parseCronometer: parseCronometer, parseCronometerExercises: parseCronometerExercises,
+    parseCronometerDailyNutrition: parseCronometerDailyNutrition,
+    parseCronometerServingsSlim: parseCronometerServingsSlim,
+    joinNutritionAndTiming: joinNutritionAndTiming,
     // registry (extension point for MyFitnessPal / FatSecret)
     registerImportParser: registerImportParser, listImportParsers: listImportParsers,
     detectParser: detectParser,

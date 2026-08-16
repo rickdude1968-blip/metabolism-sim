@@ -354,6 +354,9 @@ body.import-open { overflow: hidden; }
 .imp-issue { font-size: 12px; border-radius: 8px; padding: 6px 9px; }
 .imp-issue.warn { background: #fff6e5; border: 1px solid #f0dcb4; color: #7a5a12; }
 .imp-issue.info { background: #eef4fb; border: 1px solid #cfe0f2; color: var(--accent-d); }
+/* Something that did NOT get imported, as opposed to something that did but
+   wants checking — a stronger colour so it is not read as another footnote. */
+.imp-issue.bad { background: #fdecec; border: 1px solid #f5c2c2; color: #a12a2a; }
 .imp-skipped { font-size: 12px; background: #f7f9fc; border: 1px solid var(--border);
   border-radius: 8px; padding: 6px 9px; }
 .imp-skipped summary { cursor: pointer; color: var(--muted); }

@@ -1096,53 +1096,144 @@
     showImportOverlay(true);
   }
 
-  function importFoodLog(file) {
-    const reader = new FileReader();
-    reader.onerror = () => impStatus('Could not read that file.');
-    reader.onload = () => {
-      const text = String(reader.result || '');
+  function readFileText(file) {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onerror = () => reject(new Error('Could not read "' + (file.name || 'that file') + '".'));
+      r.onload = () => resolve(String(r.result || ''));
+      r.readAsText(file);
+    });
+  }
+
+  // One OR two files. Some Cronometer exports split what we need in half:
+  // "Daily Nutrition" knows what was eaten but not when, the slim "Servings"
+  // export knows when but not what it was worth. Selecting both joins them.
+  function importFoodLogs(fileList) {
+    const files = Array.prototype.slice.call(fileList || []);
+    if (!files.length) return;
+    if (files.length > 2) {
+      openImportReject('Import failed', 'Please select one file, or two that belong together.',
+        'You selected ' + files.length + '. A single Servings or Exercises export works on its own; ' +
+        'a Daily Nutrition export can be paired with a Servings export to supply its times.');
+      return;
+    }
+    impStatus('Reading ' + (files.length > 1 ? files.length + ' files…' : 'the file…'));
+    Promise.all(files.map(readFileText)).then(texts => {
       const F = window.foodImport;
-      const parser = F.detectParser(text);
-      if (!parser) {
-        openImportReject('Import failed', 'Nothing recognised that file.',
-          'No importer claimed it. The first line has to be the export\'s own header row — ' +
-          'a servings export needs Day and Food Name columns, an exercises export needs ' +
-          'Day, Exercise and Minutes.');
+      const parts = texts.map((text, i) => ({ name: files[i].name || 'import.csv', text: text,
+                                              parser: F.detectParser(text) }));
+      const unknown = parts.filter(p => !p.parser);
+      if (unknown.length) {
+        openImportReject('Import failed',
+          unknown.length === parts.length ? 'Nothing recognised that file.'
+            : 'One of those files was not recognised: ' + unknown[0].name,
+          'No importer claimed it. The first line has to be the export\'s own header row.\n' +
+          '· Servings needs Day and Food Name.\n' +
+          '· Daily Nutrition needs Date and the macro columns.\n' +
+          '· Exercises needs Day, Exercise and Minutes.');
         impStatus('');
         return;
       }
-      let parsed;
-      try { parsed = parser.parse(text); }
-      catch (e) {
+      const of = k => parts.filter(p => p.parser.kind === k);
+      const nutrition = of('nutrition'), timing = of('timing');
+
+      try {
+        if (parts.length === 1) {
+          const p = parts[0];
+          if (p.parser.kind === 'timing') {
+            // Times without nutrition cannot make a meal. This is the most
+            // likely wrong turn, so it names the exact fix.
+            openImportReject('One more file needed',
+              'That Servings export has times but no nutrition.',
+              'It lists what you ate and when, but not the calories or macros, so it cannot make a meal ' +
+              'on its own.\n\nExport "Daily Nutrition" as well — ideally with "Include diary group rows" ' +
+              'enabled — then select BOTH files together on this button.');
+            impStatus('');
+            return;
+          }
+          if (p.parser.kind === 'nutrition') {
+            beginJoinedImport([p], F.parseCronometerDailyNutrition(p.text), { entries: [], warnings: [] });
+            return;
+          }
+          beginSingleImport(p);          // food (full servings) or exercise
+          return;
+        }
+        // ---- two files ----
+        if (nutrition.length === 1 && timing.length === 1) {
+          beginJoinedImport(parts,
+            F.parseCronometerDailyNutrition(nutrition[0].text),
+            F.parseCronometerServingsSlim(timing[0].text));
+          return;
+        }
+        openImportReject('Import failed', 'Those two files do not go together.',
+          'Read as: ' + parts.map(p => p.name + ' → ' + p.parser.label).join('\n           ') +
+          '\n\nTwo files are only joined when one is a Daily Nutrition export and the other is a ' +
+          'Servings export that carries the times. Anything else should be imported one file at a time.');
+        impStatus('');
+      } catch (e) {
         openImportReject('Import failed', e.message || 'That file could not be read.', e.detail || '');
         impStatus('');
-        return;
       }
-      imp = {
-        fileName: file.name || 'import.csv',
-        parser: parser,
-        parsed: parsed,
-        edited: false,
-        options: {
-          merge: false,
-          defaultTimes: Object.assign({}, window.foodImport.DEFAULT_TIMES),
-          exercise: { defaultStart: window.foodImport.DEFAULT_EXERCISE_START, map: loadExerciseMap() }
-        },
-        setDayOne: false,
-        clashAck: false,
-        pendingEx: {}          // half-finished exercise classifications
-      };
-      // Reset the panel from any previous rejection.
-      $('importTitle').textContent = 'Review import';
-      $('importOptsWrap').hidden = false;
-      $('importConfirm').style.display = '';
-      $('importCancel').textContent = 'Cancel';
-      syncOptionControls();
-      remapImport();
-      showImportOverlay(true);
+    }).catch(e => {
+      openImportReject('Import failed', e.message || 'Could not read that file.', '');
       impStatus('');
+    });
+  }
+
+  function beginJoinedImport(parts, nutParsed, timParsed) {
+    const F = window.foodImport;
+    const joined = F.joinNutritionAndTiming(nutParsed, timParsed);
+    if (!joined.entries.length) {
+      openImportReject('Nothing could be imported',
+        'None of the days in that nutrition export could be matched to a time.',
+        (joined.warnings || []).map(w => '· ' + w.text).join('\n'));
+      impStatus('');
+      return;
+    }
+    startImport({
+      fileName: parts.map(p => p.name).join('  +  '),
+      parser: { id: 'cronometer-join', source: 'Cronometer', kind: 'food',
+                label: parts.length > 1 ? 'Cronometer — Daily Nutrition + Servings'
+                                        : 'Cronometer — Daily Nutrition' },
+      parsed: {
+        entries: joined.entries,
+        warnings: (nutParsed.warnings || []).concat(timParsed.warnings || [], joined.warnings || []),
+        meta: joined.meta
+      },
+      joined: true
+    });
+  }
+
+  function beginSingleImport(part) {
+    startImport({ fileName: part.name, parser: part.parser, parsed: part.parser.parse(part.text),
+                  joined: false });
+  }
+
+  function startImport(o) {
+    imp = {
+      fileName: o.fileName,
+      parser: o.parser,
+      parsed: o.parsed,
+      joined: !!o.joined,
+      edited: false,
+      options: {
+        merge: false,
+        defaultTimes: Object.assign({}, window.foodImport.DEFAULT_TIMES),
+        exercise: { defaultStart: window.foodImport.DEFAULT_EXERCISE_START, map: loadExerciseMap() }
+      },
+      setDayOne: false,
+      clashAck: false,
+      pendingEx: {}          // half-finished exercise classifications
     };
-    reader.readAsText(file);
+    // Reset the panel from any previous rejection.
+    $('importTitle').textContent = 'Review import';
+    $('importOptsWrap').hidden = false;
+    $('importConfirm').style.display = '';
+    $('importCancel').textContent = 'Cancel';
+    syncOptionControls();
+    remapImport();
+    showImportOverlay(true);
+    impStatus('');
   }
 
   // Push imp.options into the option controls (they persist across imports
@@ -1157,6 +1248,9 @@
     const isEx = imp.parsed.meta && imp.parsed.meta.kind === 'exercise';
     $('impExStartWrap').hidden = !isEx;
     $('impTimesWrap').hidden = isEx;
+    // A joined import is already one event per meal group, so the merge
+    // toggle would do nothing — offering it only invites the question.
+    $('impMerge').parentElement.hidden = isEx || imp.joined;
   }
 
   // Rebuild the plan from the current options. Any per-row edits are lost,
@@ -1224,8 +1318,13 @@
     const hi = dayNums.length ? Math.max.apply(null, dayNums) : 0;
     let s = '<div class="imp-sum-line"><b>' + esc(imp.fileName) + '</b> · read as <b>' +
       esc(imp.parser.label) + '</b></div>';
-    s += '<div class="imp-sum-line">' + imp.parsed.entries.length + ' row' +
-      (imp.parsed.entries.length !== 1 ? 's' : '') + ' in the file → <b id="impGrand">' +
+    // For a joined import, entries.length is the count AFTER the join, so
+    // quoting it as "rows in the file" would understate what was read.
+    const src = imp.joined
+      ? (meta.nutritionRows || 0) + ' nutrition row' + ((meta.nutritionRows || 0) !== 1 ? 's' : '') +
+        (meta.timingRows ? ' + ' + meta.timingRows + ' serving row' + (meta.timingRows !== 1 ? 's' : '') : '')
+      : imp.parsed.entries.length + ' row' + (imp.parsed.entries.length !== 1 ? 's' : '') + ' in the file';
+    s += '<div class="imp-sum-line">' + src + ' → <b id="impGrand">' +
       rows.length + ' event' + (rows.length !== 1 ? 's' : '') + '</b>' +
       (dayNums.length ? ' on Day ' + (lo === hi ? lo : lo + '–' + hi) : '') + '</div>';
     s += '<div class="imp-sum-line imp-dayone">Day 1 = <b>' + esc(P.dayOne || '—') + '</b>' +
@@ -1289,7 +1388,13 @@
     const note = imp.rebuiltNote; imp.rebuiltNote = '';
     if (note) iss += '<div class="imp-issue info">↻ ' + esc(note) + '</div>';
     for (const w of P.warnings) iss += '<div class="imp-issue warn">⚑ ' + esc(w) + '</div>';
-    for (const w of imp.parsed.warnings) iss += '<div class="imp-issue warn">⚑ ' + esc(w.text) + '</div>';
+    // level 'error' marks something that did NOT make it into the import, as
+    // opposed to something that did but deserves a second look.
+    for (const w of imp.parsed.warnings) {
+      const bad = w.level === 'error';
+      iss += '<div class="imp-issue ' + (bad ? 'bad' : 'warn') + '">' +
+             (bad ? '✖ ' : '⚑ ') + esc(w.text) + '</div>';
+    }
     if (P.skipped.length) {
       iss += '<details class="imp-skipped"><summary>' + P.skipped.length + ' row' +
         (P.skipped.length !== 1 ? 's' : '') + ' outside the Day 1–' + DAYS +
@@ -1439,7 +1544,7 @@
     const fi = $('foodLogImport');
     if (!fi) return;
     fi.addEventListener('change', e => {
-      if (e.target.files[0]) importFoodLog(e.target.files[0]);
+      if (e.target.files && e.target.files.length) importFoodLogs(e.target.files);
       e.target.value = '';                       // re-selecting the same file must re-fire
     });
     $('importClose').onclick = closeImport;

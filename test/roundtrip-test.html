@@ -355,7 +355,11 @@
   (function importTests() {
     const FIX = ['cronometer-servings-basic.csv', 'cronometer-servings-notime.csv',
                  'cronometer-servings-quoted.csv', 'cronometer-exercises-basic.csv',
-                 'malformed.csv'];
+                 'malformed.csv',
+                 // the two-file variant: nutrition and timing live in separate exports
+                 'cronometer-dailynutrition-grouprows.csv',
+                 'cronometer-dailynutrition-nogrouprows.csv',
+                 'cronometer-servings-slim.csv'];
     const T = [];
     const ok = (name, cond, detail) => T.push({ name, pass: !!cond, detail: detail || '' });
     const eq = (name, got, want) =>
@@ -633,6 +637,149 @@
       eq('registry: re-registering an id replaces rather than duplicates',
          (F.registerImportParser({ id: '__selftest', parse: () => ({ entries: [], warnings: [] }) }),
           F.listImportParsers().length), before + 1);
+
+      // ---- 12 · two-file variant: Daily Nutrition + slim Servings --------
+      // Neither file is usable alone. The join is on (Date, Group) and is
+      // where this feature can go quietly wrong: a mismatched key silently
+      // loses a meal, and a day-total row counted alongside its own group
+      // rows silently doubles a day.
+      eq('two-file: slim servings detected as timing-only',
+         (F.detectParser(csv['cronometer-servings-slim.csv']) || {}).id, 'cronometer-servings-slim');
+      eq('two-file: daily nutrition WITH group rows detected',
+         (F.detectParser(csv['cronometer-dailynutrition-grouprows.csv']) || {}).id, 'cronometer-daily-nutrition');
+      eq('two-file: daily nutrition WITHOUT group rows detected',
+         (F.detectParser(csv['cronometer-dailynutrition-nogrouprows.csv']) || {}).id, 'cronometer-daily-nutrition');
+      // The nutrient-rich servings file must NOT be mistaken for either half.
+      eq('two-file: full servings still wins over the slim parser',
+         (F.detectParser(csv['cronometer-servings-basic.csv']) || {}).id, 'cronometer-servings');
+      // An exercise export has "Calories Burned"; nutrition must not claim it.
+      eq('two-file: exercises not claimed by the nutrition parser',
+         (F.detectParser(csv['cronometer-exercises-basic.csv']) || {}).id, 'cronometer-exercises');
+
+      const slim = F.parseCronometerServingsSlim(csv['cronometer-servings-slim.csv']);
+      eq('slim: entry count', slim.entries.length, 10);
+      ok('slim: no nutrients are invented', slim.entries.every(e => e.kcal === undefined));
+      // 12-hour clock with a meridiem is what the real export writes.
+      const alm = slim.entries.filter(e => /Almonds/.test(e.name))[0];
+      eq('slim: "3:43 PM" parses to 15:43', alm && alm.time, '15:43');
+      eq('slim: "7:12 AM" parses to 07:12',
+         slim.entries.filter(e => /Oatmeal/.test(e.name))[0].time, '07:12');
+      // "Nuts" sits in the Category column right next to Group; picking the
+      // wrong one would silently regroup the whole import.
+      eq('slim: Group captured, not Category', alm && alm.group, 'Afternoon Snack');
+      ok('slim: quoted comma names survive here too',
+         slim.entries.some(e => e.name === 'Beer, regular'), JSON.stringify(slim.entries.map(e => e.name)));
+
+      const nutG = F.parseCronometerDailyNutrition(csv['cronometer-dailynutrition-grouprows.csv']);
+      eq('nutrition: group rows detected', nutG.meta.hasGroupRows, true);
+      eq('nutrition: row count (incl. the day-total rows)', nutG.entries.length, 10);
+      eq('nutrition: Carbs column, not "Net Carbs"', nutG.meta.columns.carbs, 'Carbs (g)');
+      eq('nutrition: Fat column, not "Saturated"', nutG.meta.columns.fat, 'Fat (g)');
+
+      // ---- the join, with group rows -------------------------------------
+      const J = F.joinNutritionAndTiming(nutG, slim);
+      eq('join: one event per matched group', J.entries.length, 7);
+      eq('join: nothing unresolvable when group rows are present', J.meta.unresolvedDays.length, 0);
+      const jat = (date, name) => J.entries.filter(e => e.date === date && e.name === name)[0];
+
+      const jb = jat('2026-09-01', 'Breakfast');
+      eq('join: Breakfast time = earliest serving in that group', jb && jb.time, '07:12');
+      near('join: Breakfast kcal from the nutrition file', jb ? jb.kcal : -1, 280);
+      near('join: Breakfast carbs', jb ? jb.carbs_g : -1, 53);
+      near('join: Breakfast protein', jb ? jb.protein_g : -1, 8.8);
+      near('join: Breakfast fat', jb ? jb.fat_g : -1, 4.3);
+      eq('join: Breakfast remembers both foods', jb ? jb.foods.length : -1, 2);
+
+      const jl = jat('2026-09-01', 'Lunch');
+      eq('join: Lunch takes 12:35, not the later 12:40', jl && jl.time, '12:35');
+      near('join: Lunch kcal', jl ? jl.kcal : -1, 480);
+      near('join: Lunch protein', jl ? jl.protein_g : -1, 48.5);
+
+      // Alcohol has to survive the join or an imported evening loses its
+      // entire BAC trace.
+      const jd = jat('2026-09-01', 'Dinner');
+      eq('join: Dinner time = 18:50 (earliest of 18:50 / 19:05)', jd && jd.time, '18:50');
+      near('join: Dinner alcohol passes through', jd ? jd.alcohol_g : -1, 14);
+      near('join: Dinner kcal', jd ? jd.kcal : -1, 520);
+      near('join: Dinner carbs', jd ? jd.carbs_g : -1, 12.6);
+
+      const j2 = jat('2026-09-02', 'Afternoon Snack');
+      eq('join: single-food day maps to 15:43', j2 && j2.time, '15:43');
+      near('join: single-food day kcal', j2 ? j2.kcal : -1, 170);
+
+      // The day-total row must not be added on top of its own group rows.
+      near('join: day 1 kcal totals the GROUPS, not group+total',
+        J.entries.filter(e => e.date === '2026-09-01').reduce((s, e) => s + e.kcal, 0), 1430);
+      near('join: day 1 carbs likewise',
+        J.entries.filter(e => e.date === '2026-09-01').reduce((s, e) => s + e.carbs_g, 0), 137.6);
+      near('join: day 2 is not doubled by its total row',
+        J.entries.filter(e => e.date === '2026-09-02').reduce((s, e) => s + e.kcal, 0), 170);
+      ok('join: the ignored day-total row is reported',
+         J.warnings.some(w => /day-total row was ignored/i.test(w.text)),
+         JSON.stringify(J.warnings.map(w => w.text)));
+
+      // ---- groups present in only one file --------------------------------
+      const jls = jat('2026-09-01', 'Late Snack');
+      ok('join: nutrition-only group still imports', !!jls);
+      eq('join: nutrition-only group has no time to inherit', jls && jls.time, null);
+      ok('join: and it is reported, not silently timed',
+         J.warnings.some(w => /Late Snack/.test(w.text) && /logs no food/i.test(w.text)),
+         JSON.stringify(J.warnings.map(w => w.text)));
+      ok('join: servings-only group is reported',
+         J.warnings.some(w => /Snacks/.test(w.text) && /no matching nutrition/i.test(w.text)),
+         JSON.stringify(J.warnings.map(w => w.text)));
+      eq('join: servings-only group listed in meta', J.meta.orphanGroups.length, 1);
+      ok('join: the orphan is the Snacks group', /Snacks/.test(J.meta.orphanGroups[0] || ''),
+         J.meta.orphanGroups[0]);
+
+      // ---- through the mapper --------------------------------------------
+      const planJ = F.mapEntriesToSchedule(J.entries, { startDate: '2026-09-01', days: 5 });
+      eq('join+map: 7 events', planJ.planned.length, 7);
+      const pAt = (d, n) => planJ.planned.filter(p => p.ev.day === d && p.ev.name === n)[0];
+      eq('join+map: Breakfast lands Day 1 at 07:12', pAt(1, 'Breakfast').ev.time, '07:12');
+      eq('join+map: Afternoon Snack lands Day 2 at 15:43', pAt(2, 'Afternoon Snack').ev.time, '15:43');
+      near('join+map: alcohol reaches the schedule event', pAt(1, 'Dinner').ev.alcohol, 14);
+      // No time to inherit -> the meal-slot default, and it says so.
+      eq('join+map: nutrition-only snack falls back to the snack default',
+         pAt(1, 'Late Snack').ev.time, '15:00');
+      eq('join+map: and is marked as app-assigned', pAt(1, 'Late Snack').explicitTime, false);
+      near('join+map: day 1 kcal across events',
+        planJ.planned.filter(p => p.ev.day === 1).reduce((s, p) => s + p.ev.kcal, 0), 1430);
+      eq('join+map: merged group names its source foods',
+         pAt(1, 'Breakfast').sources.length, 2);
+
+      // ---- the join WITHOUT group rows -----------------------------------
+      const nutN = F.parseCronometerDailyNutrition(csv['cronometer-dailynutrition-nogrouprows.csv']);
+      eq('nogroups: no group rows detected', nutN.meta.hasGroupRows, false);
+      eq('nogroups: one row per day', nutN.entries.length, 3);
+      const JN = F.joinNutritionAndTiming(nutN, slim);
+      // 09-02 has exactly one group, so it can be placed; 09-01 and 09-03
+      // cannot be split and must be refused rather than guessed.
+      eq('nogroups: only the single-group day joins', JN.entries.length, 1);
+      eq('nogroups: it is 2026-09-02', JN.entries[0].date, '2026-09-02');
+      eq('nogroups: at the single group\'s time', JN.entries[0].time, '15:43');
+      near('nogroups: with the whole day\'s kcal', JN.entries[0].kcal, 170);
+      ok('nogroups: the day-level join is flagged as an assumption',
+         JN.warnings.some(w => /only a day total/i.test(w.text) && /single meal group/i.test(w.text)),
+         JSON.stringify(JN.warnings.map(w => w.text)));
+      eq('nogroups: two days are unresolvable', JN.meta.unresolvedDays.length, 2);
+      ok('nogroups: 09-01 and 09-03 are the unresolvable ones',
+         JN.meta.unresolvedDays.map(u => u.date).sort().join(',') === '2026-09-01,2026-09-03',
+         JSON.stringify(JN.meta.unresolvedDays));
+      eq('nogroups: 09-01 names its 4 competing groups',
+         JN.meta.unresolvedDays.filter(u => u.date === '2026-09-01')[0].groups.length, 4);
+      ok('nogroups: the warning tells the user how to fix it',
+         JN.warnings.some(w => /Include diary group rows/i.test(w.text)),
+         JSON.stringify(JN.warnings.map(w => w.text)));
+      ok('nogroups: an unresolvable day imports nothing',
+         !JN.entries.some(e => e.date === '2026-09-01' || e.date === '2026-09-03'));
+
+      // ---- nutrition with no timing file at all ---------------------------
+      const JA = F.joinNutritionAndTiming(nutG, { entries: [] });
+      eq('nutrition alone: every group still imports', JA.entries.length, 7);
+      ok('nutrition alone: none of them invent a time', JA.entries.every(e => e.time === null));
+      ok('nutrition alone: the missing timing file is reported',
+         JA.warnings.some(w => /logs no food/i.test(w.text)));
 
       // ---- render --------------------------------------------------------
       const fails = T.filter(t => !t.pass);
